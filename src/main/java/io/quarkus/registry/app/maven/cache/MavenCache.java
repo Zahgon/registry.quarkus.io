@@ -2,23 +2,23 @@ package io.quarkus.registry.app.maven.cache;
 
 import java.time.LocalDateTime;
 
-import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.stereotype.Component;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 
-import io.quarkus.cache.CacheInvalidateAll;
 import io.quarkus.registry.app.CacheNames;
 import jakarta.annotation.PostConstruct;
-import jakarta.enterprise.context.ApplicationScoped;
 
 /**
  * Holding the maven cache
  */
-@ApplicationScoped
+@Component
 public class MavenCache {
 
-    @ConfigProperty(name = "maven.cache.maximum-size", defaultValue = "10000")
+    @Value("${maven.cache.maximum-size:10000}")
     int maximumSize;
 
     private Cache<String, MavenResponse> cache;
@@ -33,7 +33,7 @@ public class MavenCache {
                 .build();
     }
 
-    @CacheInvalidateAll(cacheName = CacheNames.METADATA)
+    @CacheEvict(cacheNames = CacheNames.METADATA, allEntries = true)
     public void clear() {
         cache.invalidateAll();
         lastInvalidateTime = LocalDateTime.now();

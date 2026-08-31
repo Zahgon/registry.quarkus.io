@@ -1,12 +1,12 @@
 package io.quarkus.registry.app.maven;
 
+import org.springframework.http.ResponseEntity;
+
 import io.quarkus.maven.dependency.ArtifactCoords;
-import jakarta.ws.rs.core.Response;
-import jakarta.ws.rs.core.UriInfo;
 
 public interface ArtifactContentProvider {
-    boolean supports(ArtifactCoords artifact, UriInfo uriInfo);
+    boolean supports(ArtifactCoords artifact, MavenRequest request);
 
-    Response provide(ArtifactCoords artifact, UriInfo uriInfo) throws Exception;
+    ResponseEntity<String> provide(ArtifactCoords artifact, MavenRequest request) throws Exception;
 
 }

@@ -3,33 +3,52 @@ package io.quarkus.registry.app.maven.cache;
 import java.time.Instant;
 import java.util.Objects;
 
-import io.quarkus.logging.Log;
-import io.quarkus.registry.app.model.DbState;
-import io.quarkus.runtime.Startup;
-import io.quarkus.scheduler.Scheduled;
-import jakarta.annotation.PostConstruct;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
 
-@ApplicationScoped
-@Startup
+import io.quarkus.registry.app.repository.DbStateRepository;
+import jakarta.annotation.PostConstruct;
+
+@Component
 public class MavenCacheState {
 
-    @Inject
-    MavenCache cache;
+    private static final Logger log = LoggerFactory.getLogger(MavenCacheState.class);
+
+    private final MavenCache cache;
+
+    private final DbStateRepository dbStateRepository;
 
     private Instant lastUpdate;
+
+    public MavenCacheState(MavenCache cache, DbStateRepository dbStateRepository) {
+        this.cache = cache;
+        this.dbStateRepository = dbStateRepository;
+    }
+
+    /**
+     * The Quarkus version of this bean was eagerly started (@Startup) and initialized the state in @PostConstruct so that
+     * {@link #getLastUpdate()} never returns null on the first request.
+     */
+    @PostConstruct
+    void init() {
+        try {
+            checkDbState();
+        } catch (RuntimeException e) {
+            log.warn("Unable to read the initial database state", e);
+        }
+    }
 
     /**
      * Check cache state on every 10 seconds
      */
-    @PostConstruct
-    @Scheduled(cron = "{quarkus.registry.cache.cron:*/10 * * * * ?}")
+    @Scheduled(cron = "${quarkus.registry.cache.cron:*/10 * * * * *}")
     void checkDbState() {
-        Log.debugf("Checking cache state %s", lastUpdate);
-        Instant updatedAt = DbState.findUpdatedAt();
+        log.debug("Checking cache state {}", lastUpdate);
+        Instant updatedAt = dbStateRepository.findUpdatedAt();
         if (lastUpdate == null || !Objects.equals(lastUpdate, updatedAt)) {
-            Log.debugf("Cache changed -> %s", updatedAt);
+            log.debug("Cache changed -> {}", updatedAt);
             lastUpdate = updatedAt;
             cache.clear();
         }

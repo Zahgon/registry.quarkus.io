@@ -5,22 +5,29 @@ import static org.apache.commons.lang3.StringUtils.abbreviate;
 import java.util.Map;
 import java.util.Optional;
 
-import org.eclipse.microprofile.openapi.annotations.Operation;
-import org.eclipse.microprofile.openapi.annotations.enums.SecuritySchemeIn;
-import org.eclipse.microprofile.openapi.annotations.enums.SecuritySchemeType;
-import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
-import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
-import org.eclipse.microprofile.openapi.annotations.security.SecurityRequirement;
-import org.eclipse.microprofile.openapi.annotations.security.SecurityScheme;
-import org.eclipse.microprofile.openapi.annotations.tags.Tag;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.jakarta.rs.yaml.YAMLMediaTypes;
 
-import io.quarkus.logging.Log;
 import io.quarkus.maven.dependency.ArtifactCoords;
 import io.quarkus.maven.dependency.ArtifactKey;
+import io.quarkus.registry.app.config.YAMLMediaTypes;
 import io.quarkus.registry.app.events.ExtensionCatalogDeleteEvent;
 import io.quarkus.registry.app.events.ExtensionCatalogImportEvent;
 import io.quarkus.registry.app.events.ExtensionCompatibilityCreateEvent;
@@ -30,7 +37,6 @@ import io.quarkus.registry.app.events.ExtensionDeleteEvent;
 import io.quarkus.registry.app.events.ExtensionReleaseDeleteEvent;
 import io.quarkus.registry.app.maven.cache.MavenCache;
 import io.quarkus.registry.app.model.Category;
-import io.quarkus.registry.app.model.DbState;
 import io.quarkus.registry.app.model.Extension;
 import io.quarkus.registry.app.model.ExtensionRelease;
 import io.quarkus.registry.app.model.Platform;
@@ -38,170 +44,194 @@ import io.quarkus.registry.app.model.PlatformExtension;
 import io.quarkus.registry.app.model.PlatformRelease;
 import io.quarkus.registry.app.model.PlatformReleaseCategory;
 import io.quarkus.registry.app.model.PlatformStream;
+import io.quarkus.registry.app.repository.CategoryRepository;
+import io.quarkus.registry.app.repository.DbStateRepository;
+import io.quarkus.registry.app.repository.ExtensionReleaseRepository;
+import io.quarkus.registry.app.repository.ExtensionRepository;
+import io.quarkus.registry.app.repository.PlatformExtensionRepository;
+import io.quarkus.registry.app.repository.PlatformReleaseCategoryRepository;
+import io.quarkus.registry.app.repository.PlatformReleaseRepository;
+import io.quarkus.registry.app.repository.PlatformRepository;
+import io.quarkus.registry.app.repository.PlatformStreamRepository;
+import io.quarkus.registry.app.rest.BadRequestException;
+import io.quarkus.registry.app.rest.NotFoundException;
 import io.quarkus.registry.catalog.ExtensionCatalog;
-import jakarta.annotation.security.RolesAllowed;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.enums.SecuritySchemeIn;
+import io.swagger.v3.oas.annotations.enums.SecuritySchemeType;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.security.SecurityScheme;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.NotNull;
-import jakarta.ws.rs.BadRequestException;
-import jakarta.ws.rs.Consumes;
-import jakarta.ws.rs.DELETE;
-import jakarta.ws.rs.DefaultValue;
-import jakarta.ws.rs.FormParam;
-import jakarta.ws.rs.HeaderParam;
-import jakarta.ws.rs.NotFoundException;
-import jakarta.ws.rs.PATCH;
-import jakarta.ws.rs.POST;
-import jakarta.ws.rs.Path;
-import jakarta.ws.rs.PathParam;
-import jakarta.ws.rs.Produces;
-import jakarta.ws.rs.WebApplicationException;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
 
-@ApplicationScoped
-@Path("/admin")
-@RolesAllowed("admin")
-@SecurityScheme(securitySchemeName = "Authentication", description = "Admin token", type = SecuritySchemeType.APIKEY, apiKeyName = "TOKEN", in = SecuritySchemeIn.HEADER)
+@RestController
+@RequestMapping("/admin")
+@Validated
+@SecurityScheme(name = "Authentication", description = "Admin token", type = SecuritySchemeType.APIKEY, paramName = "TOKEN", in = SecuritySchemeIn.HEADER)
 @Tag(name = "Admin", description = "Admin related services")
 @SuppressWarnings("unchecked")
 public class AdminApi {
+
+    private static final Logger LOG = LoggerFactory.getLogger(AdminApi.class);
 
     /**
      * Maximum abbreviation width for extensions
      */
     private static final int MAX_ABBREVIATION_WIDTH = 100;
 
-    @Inject
-    AdminService adminService;
+    private final AdminService adminService;
 
-    @Inject
-    MavenCache cache;
+    private final MavenCache cache;
 
-    @Inject
-    ObjectMapper objectMapper;
+    private final ObjectMapper objectMapper;
 
-    @POST
-    @Path("/v1/extension/catalog")
-    @Produces(MediaType.APPLICATION_JSON)
-    @Consumes({MediaType.APPLICATION_JSON, YAMLMediaTypes.APPLICATION_JACKSON_YAML})
+    private final CategoryRepository categoryRepository;
+
+    private final DbStateRepository dbStateRepository;
+
+    private final ExtensionRepository extensionRepository;
+
+    private final ExtensionReleaseRepository extensionReleaseRepository;
+
+    private final PlatformRepository platformRepository;
+
+    private final PlatformStreamRepository platformStreamRepository;
+
+    private final PlatformReleaseRepository platformReleaseRepository;
+
+    private final PlatformReleaseCategoryRepository platformReleaseCategoryRepository;
+
+    private final PlatformExtensionRepository platformExtensionRepository;
+
+    public AdminApi(AdminService adminService, MavenCache cache, ObjectMapper objectMapper,
+            CategoryRepository categoryRepository, DbStateRepository dbStateRepository,
+            ExtensionRepository extensionRepository, ExtensionReleaseRepository extensionReleaseRepository,
+            PlatformRepository platformRepository, PlatformStreamRepository platformStreamRepository,
+            PlatformReleaseRepository platformReleaseRepository,
+            PlatformReleaseCategoryRepository platformReleaseCategoryRepository,
+            PlatformExtensionRepository platformExtensionRepository) {
+        this.adminService = adminService;
+        this.cache = cache;
+        this.objectMapper = objectMapper;
+        this.categoryRepository = categoryRepository;
+        this.dbStateRepository = dbStateRepository;
+        this.extensionRepository = extensionRepository;
+        this.extensionReleaseRepository = extensionReleaseRepository;
+        this.platformRepository = platformRepository;
+        this.platformStreamRepository = platformStreamRepository;
+        this.platformReleaseRepository = platformReleaseRepository;
+        this.platformReleaseCategoryRepository = platformReleaseCategoryRepository;
+        this.platformExtensionRepository = platformExtensionRepository;
+    }
+
+    @PostMapping(value = "/v1/extension/catalog", produces = MediaType.APPLICATION_JSON_VALUE, consumes = {
+            MediaType.APPLICATION_JSON_VALUE, YAMLMediaTypes.APPLICATION_JACKSON_YAML})
     @SecurityRequirement(name = "Authentication")
     @Operation(summary = "Inserts a new Extension Catalog (Platform Release) in the database", description = "Invoke this endpoint when a new extension catalog release is available")
-    public Response addExtensionCatalog(
-            @NotNull(message = "X-Platform header missing") @HeaderParam("X-Platform") String platformKey,
-            @DefaultValue("C") @HeaderParam("X-Platform-Type") Platform.Type platformType,
-            @DefaultValue("false") @HeaderParam("X-Platform-Pinned") boolean pinned,
-            @NotNull(message = "Body payload is missing") ExtensionCatalog catalog) {
+    public ResponseEntity<Object> addExtensionCatalog(
+            @NotNull(message = "X-Platform header missing") @RequestHeader(name = "X-Platform", required = false) String platformKey,
+            @RequestHeader(name = "X-Platform-Type", required = false, defaultValue = "C") Platform.Type platformType,
+            @RequestHeader(name = "X-Platform-Pinned", required = false, defaultValue = "false") boolean pinned,
+            @NotNull(message = "Body payload is missing") @RequestBody(required = false) ExtensionCatalog catalog) {
         final ArtifactCoords bom = catalog.getBom();
-        Log.infof("Adding catalog %s", abbreviate(bom.toString(), MAX_ABBREVIATION_WIDTH));
+        LOG.info("Adding catalog {}", abbreviate(String.valueOf(bom), MAX_ABBREVIATION_WIDTH));
         ExtensionCatalogImportEvent event = new ExtensionCatalogImportEvent(catalog, platformKey, pinned, platformType);
         adminService.onExtensionCatalogImport(event);
         cache.clear();
-        return Response.accepted(bom).build();
+        return ResponseEntity.accepted().body(bom);
     }
 
-    @DELETE
-    @Path("/v1/extension/catalog")
-    @Produces(MediaType.APPLICATION_JSON)
-    @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
+    @DeleteMapping(value = "/v1/extension/catalog", produces = MediaType.APPLICATION_JSON_VALUE, consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
     @SecurityRequirement(name = "Authentication")
     @Operation(summary = "Deletes an extension catalog (platform) from the database")
-    public Response deleteExtensionCatalog(
-            @NotNull(message = "platformKey is missing") @FormParam("platformKey") String platformKey,
-            @NotNull(message = "version is missing") @FormParam("version") String version) {
-        PlatformRelease platformRelease = PlatformRelease.findByPlatformKey(platformKey, version)
+    public ResponseEntity<Object> deleteExtensionCatalog(
+            @NotNull(message = "platformKey is missing") @RequestParam(name = "platformKey", required = false) String platformKey,
+            @NotNull(message = "version is missing") @RequestParam(name = "version", required = false) String version) {
+        PlatformRelease platformRelease = platformReleaseRepository.findByPlatformKey(platformKey, version)
                 .orElseThrow(() -> new NotFoundException("No Platform Release found"));
         ExtensionCatalogDeleteEvent event = new ExtensionCatalogDeleteEvent(platformRelease);
         adminService.onExtensionCatalogDelete(event);
         cache.clear();
-        return Response.accepted().build();
+        return ResponseEntity.accepted().build();
     }
 
-    @POST
-    @Path("/v1/extension")
-    @Produces(MediaType.APPLICATION_JSON)
-    @Consumes({MediaType.APPLICATION_JSON, YAMLMediaTypes.APPLICATION_JACKSON_YAML})
+    @PostMapping(value = "/v1/extension", produces = MediaType.APPLICATION_JSON_VALUE, consumes = {
+            MediaType.APPLICATION_JSON_VALUE, YAMLMediaTypes.APPLICATION_JACKSON_YAML})
     @SecurityRequirement(name = "Authentication")
     @Operation(summary = "Inserts an extension in the database")
-    public Response addExtension(
-            @NotNull(message = "Body payload is missing") io.quarkus.registry.catalog.Extension extension) {
+    public ResponseEntity<Object> addExtension(
+            @NotNull(message = "Body payload is missing") @RequestBody(required = false) io.quarkus.registry.catalog.Extension extension) {
         ArtifactCoords bom = extension.getArtifact();
-        Optional<ExtensionRelease> extensionRelease = ExtensionRelease
+        Optional<ExtensionRelease> extensionRelease = extensionReleaseRepository
                 .findByGAV(bom.getGroupId(), bom.getArtifactId(), bom.getVersion());
         if (extensionRelease.isPresent()) {
-            return Response.status(Response.Status.CONFLICT).build();
+            return ResponseEntity.status(HttpStatus.CONFLICT).build();
         }
-        Log.infof("Adding extension %s", abbreviate(String.valueOf(extension.getArtifact()), MAX_ABBREVIATION_WIDTH));
+        LOG.info("Adding extension {}", abbreviate(String.valueOf(extension.getArtifact()), MAX_ABBREVIATION_WIDTH));
         ExtensionCreateEvent event = new ExtensionCreateEvent(extension);
         adminService.onExtensionCreate(event);
         cache.clear();
-        return Response.accepted(bom).build();
+        return ResponseEntity.accepted().body(bom);
     }
 
-    @DELETE
-    @Path("/v1/extension")
-    @Produces(MediaType.APPLICATION_JSON)
-    @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
+    @DeleteMapping(value = "/v1/extension", produces = MediaType.APPLICATION_JSON_VALUE, consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
     @SecurityRequirement(name = "Authentication")
     @Operation(summary = "Deletes an extension from the database")
-    public Response deleteExtension(@NotNull(message = "groupId is missing") @FormParam("groupId") String groupId,
-                                    @NotNull(message = "artifactId is missing") @FormParam("artifactId") String artifactId,
-                                    @FormParam("version") String version) {
+    public ResponseEntity<Object> deleteExtension(
+            @NotNull(message = "groupId is missing") @RequestParam(name = "groupId", required = false) String groupId,
+            @NotNull(message = "artifactId is missing") @RequestParam(name = "artifactId", required = false) String artifactId,
+            @RequestParam(name = "version", required = false) String version) {
         if (version != null) {
             ArtifactCoords entity = ArtifactCoords.of(groupId, artifactId, null, null, version);
-            ExtensionRelease extensionRelease = ExtensionRelease.findByGAV(groupId, artifactId, version)
-                    .orElseThrow(() -> new WebApplicationException(Response.Status.NOT_FOUND));
+            ExtensionRelease extensionRelease = extensionReleaseRepository.findByGAV(groupId, artifactId, version)
+                    .orElseThrow(NotFoundException::new);
             // If an extension release belongs to a platform, do not remove
             if (!extensionRelease.platforms.isEmpty()) {
-                return Response.status(Response.Status.NOT_ACCEPTABLE)
-                        .entity(entity)
-                        .build();
+                return ResponseEntity.status(HttpStatus.NOT_ACCEPTABLE)
+                        .body(entity);
             } else {
-                Log.infof("Removing extension release %s:%s:s",
+                LOG.info("Removing extension release {}:{}:s",
                         abbreviate(groupId, MAX_ABBREVIATION_WIDTH),
                         abbreviate(artifactId, MAX_ABBREVIATION_WIDTH),
                         abbreviate(version, MAX_ABBREVIATION_WIDTH));
                 ExtensionReleaseDeleteEvent event = new ExtensionReleaseDeleteEvent(extensionRelease);
                 adminService.onExtensionReleaseDelete(event);
                 cache.clear();
-                return Response.accepted(entity).build();
+                return ResponseEntity.accepted().body(entity);
             }
         } else {
             ArtifactKey entity = ArtifactKey.ga(groupId, artifactId);
-            Extension extension = Extension.findByGA(groupId, artifactId)
-                    .orElseThrow(() -> new WebApplicationException(Response.Status.NOT_FOUND));
-            Log.infof("Removing extension %s:%s", abbreviate(groupId, MAX_ABBREVIATION_WIDTH),
+            Extension extension = extensionRepository.findByGA(groupId, artifactId)
+                    .orElseThrow(NotFoundException::new);
+            LOG.info("Removing extension {}:{}", abbreviate(groupId, MAX_ABBREVIATION_WIDTH),
                     abbreviate(artifactId, MAX_ABBREVIATION_WIDTH));
             // If any extension release belongs to a platform, do not delete it
             if (extension.releases.stream().anyMatch(extensionRelease -> !extensionRelease.platforms.isEmpty())) {
-                return Response.status(Response.Status.NOT_ACCEPTABLE)
-                        .entity(entity)
-                        .build();
+                return ResponseEntity.status(HttpStatus.NOT_ACCEPTABLE)
+                        .body(entity);
             } else {
                 ExtensionDeleteEvent event = new ExtensionDeleteEvent(extension);
                 adminService.onExtensionDelete(event);
                 cache.clear();
-                return Response.accepted(entity).build();
+                return ResponseEntity.accepted().body(entity);
             }
         }
     }
 
-    @POST
-    @Path("/v1/extension/compat")
-    @Produces(MediaType.APPLICATION_JSON)
-    @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
+    @PostMapping(value = "/v1/extension/compat", produces = MediaType.APPLICATION_JSON_VALUE, consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
     @SecurityRequirement(name = "Authentication")
     @Operation(summary = "Flags an extension as compatible against a specific Quarkus version")
-    public Response addExtensionCompatibilty(
-            @NotNull(message = "groupId is missing") @FormParam("groupId") String groupId,
-            @NotNull(message = "artifactId is missing") @FormParam("artifactId") String artifactId,
-            @NotNull(message = "version is missing") @FormParam("version") String version,
-            @NotNull(message = "quarkusCore is missing") @FormParam("quarkusCore") String quarkusCore,
-            @DefaultValue("true") @FormParam("compatible") Boolean compatible) {
-        ExtensionRelease extensionRelease = ExtensionRelease.findByGAV(groupId, artifactId, version)
-                .orElseThrow(() -> new WebApplicationException(Response.Status.NOT_FOUND));
-        Log.infof("Extension %s:%s:%s is %s with Quarkus %s",
+    public ResponseEntity<Object> addExtensionCompatibilty(
+            @NotNull(message = "groupId is missing") @RequestParam(name = "groupId", required = false) String groupId,
+            @NotNull(message = "artifactId is missing") @RequestParam(name = "artifactId", required = false) String artifactId,
+            @NotNull(message = "version is missing") @RequestParam(name = "version", required = false) String version,
+            @NotNull(message = "quarkusCore is missing") @RequestParam(name = "quarkusCore", required = false) String quarkusCore,
+            @RequestParam(name = "compatible", required = false, defaultValue = "true") Boolean compatible) {
+        ExtensionRelease extensionRelease = extensionReleaseRepository.findByGAV(groupId, artifactId, version)
+                .orElseThrow(NotFoundException::new);
+        LOG.info("Extension {}:{}:{} is {} with Quarkus {}",
                 abbreviate(groupId, MAX_ABBREVIATION_WIDTH),
                 abbreviate(artifactId, MAX_ABBREVIATION_WIDTH),
                 abbreviate(version, MAX_ABBREVIATION_WIDTH),
@@ -211,22 +241,20 @@ public class AdminApi {
                 compatible);
         adminService.onExtensionCompatibilityCreate(event);
         cache.clear();
-        return Response.accepted().build();
+        return ResponseEntity.accepted().build();
     }
 
-    @DELETE
-    @Path("/v1/extension/compat")
-    @Produces(MediaType.APPLICATION_JSON)
-    @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
+    @DeleteMapping(value = "/v1/extension/compat", produces = MediaType.APPLICATION_JSON_VALUE, consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
     @SecurityRequirement(name = "Authentication")
     @Operation(summary = "Flags an extension as incompatible against a specific Quarkus version")
-    public Response removeExtensionCompatibilty(@NotNull(message = "groupId is missing") @FormParam("groupId") String groupId,
-                                                @NotNull(message = "artifactId is missing") @FormParam("artifactId") String artifactId,
-                                                @NotNull(message = "version is missing") @FormParam("version") String version,
-                                                @NotNull(message = "quarkusCore is missing") @FormParam("quarkusCore") String quarkusCore) {
-        ExtensionRelease extensionRelease = ExtensionRelease.findByGAV(groupId, artifactId, version)
-                .orElseThrow(() -> new WebApplicationException(Response.Status.NOT_FOUND));
-        Log.infof("Extension %s:%s:%s is no longer compatible with Quarkus %s",
+    public ResponseEntity<Object> removeExtensionCompatibilty(
+            @NotNull(message = "groupId is missing") @RequestParam(name = "groupId", required = false) String groupId,
+            @NotNull(message = "artifactId is missing") @RequestParam(name = "artifactId", required = false) String artifactId,
+            @NotNull(message = "version is missing") @RequestParam(name = "version", required = false) String version,
+            @NotNull(message = "quarkusCore is missing") @RequestParam(name = "quarkusCore", required = false) String quarkusCore) {
+        ExtensionRelease extensionRelease = extensionReleaseRepository.findByGAV(groupId, artifactId, version)
+                .orElseThrow(NotFoundException::new);
+        LOG.info("Extension {}:{}:{} is no longer compatible with Quarkus {}",
                 abbreviate(groupId, MAX_ABBREVIATION_WIDTH),
                 abbreviate(artifactId, MAX_ABBREVIATION_WIDTH),
                 abbreviate(version, MAX_ABBREVIATION_WIDTH),
@@ -234,91 +262,85 @@ public class AdminApi {
         ExtensionCompatibleDeleteEvent event = new ExtensionCompatibleDeleteEvent(extensionRelease, quarkusCore);
         adminService.onExtensionCompatibilityDelete(event);
         cache.clear();
-        return Response.accepted().build();
+        return ResponseEntity.accepted().build();
     }
 
-    @DELETE
-    @Path("/v1/maven/cache")
+    @DeleteMapping("/v1/maven/cache")
     @SecurityRequirement(name = "Authentication")
     @Operation(summary = "Clear the maven cache")
-    public Response clearCache() {
+    public ResponseEntity<Object> clearCache() {
         cache.clear();
-        return Response.accepted().build();
+        return ResponseEntity.accepted().build();
     }
 
-    @PATCH
-    @Path("/v1/stream/{platformKey}/{streamKey}")
+    @PatchMapping(value = "/v1/stream/{platformKey}/{streamKey}", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
     @SecurityRequirement(name = "Authentication")
-    @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
     @Transactional
     @Operation(summary = "Patches a PlatformStream")
-    public Response patchPlatformStream(
-            @NotNull(message = "platformKey is missing") @PathParam("platformKey") String platformKey,
-            @NotNull(message = "streamKey is missing") @PathParam("streamKey") String streamKey,
-            @FormParam("unlisted") boolean unlisted,
-            @FormParam("pinned") boolean pinned,
-            @FormParam("lts") boolean lts) {
-        Platform platform = Platform.findByKey(platformKey)
+    public ResponseEntity<Object> patchPlatformStream(
+            @NotNull(message = "platformKey is missing") @PathVariable("platformKey") String platformKey,
+            @NotNull(message = "streamKey is missing") @PathVariable("streamKey") String streamKey,
+            @RequestParam(name = "unlisted", required = false, defaultValue = "false") boolean unlisted,
+            @RequestParam(name = "pinned", required = false, defaultValue = "false") boolean pinned,
+            @RequestParam(name = "lts", required = false, defaultValue = "false") boolean lts) {
+        Platform platform = platformRepository.findByPlatformKey(platformKey)
                 .orElseThrow(() -> new NotFoundException("Platform not found"));
-        PlatformStream stream = PlatformStream.findByNaturalKey(platform, streamKey)
+        PlatformStream stream = platformStreamRepository.findByPlatformAndStreamKey(platform, streamKey)
                 .orElseThrow(() -> new NotFoundException("Platform Stream not found"));
         stream.unlisted = unlisted;
         stream.pinned = pinned;
         stream.lts = lts;
         try {
-            stream.persistAndFlush();
+            platformStreamRepository.saveAndFlush(stream);
             cache.clear();
         } finally {
-            DbState.updateUpdatedAt();
+            dbStateRepository.updateUpdatedAt();
         }
-        return Response.accepted().build();
+        return ResponseEntity.accepted().build();
     }
 
-    @Path("/v1/stream/{platformKey}/{streamKey}")
-    @DELETE
+    @DeleteMapping("/v1/stream/{platformKey}/{streamKey}")
     @SecurityRequirement(name = "Authentication")
-    @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
     @Transactional
     @Operation(summary = "Deletes a PlatformStream")
-    public Response deletePlatformStream(
-            @NotNull(message = "platformKey is missing") @PathParam("platformKey") String platformKey,
-            @NotNull(message = "streamKey is missing") @PathParam("streamKey") String streamKey) {
-        Platform platform = Platform.findByKey(platformKey)
+    public ResponseEntity<Object> deletePlatformStream(
+            @NotNull(message = "platformKey is missing") @PathVariable("platformKey") String platformKey,
+            @NotNull(message = "streamKey is missing") @PathVariable("streamKey") String streamKey) {
+        Platform platform = platformRepository.findByPlatformKey(platformKey)
                 .orElseThrow(() -> new NotFoundException("Platform not found"));
-        PlatformStream stream = PlatformStream.findByNaturalKey(platform, streamKey)
+        PlatformStream stream = platformStreamRepository.findByPlatformAndStreamKey(platform, streamKey)
                 .orElseThrow(() -> new NotFoundException("Platform Stream not found"));
         try {
             // Delete the stream
-            stream.delete();
+            platformStreamRepository.delete(stream);
             cache.clear();
             // Delete the platform members too
-            for (Platform member : Platform.findMembersByPlatform(platform)) {
-                PlatformStream.findByNaturalKey(member, streamKey).ifPresent(PlatformStream::delete);
+            for (Platform member : platformRepository.findMembersByPlatform(platform)) {
+                platformStreamRepository.findByPlatformAndStreamKey(member, streamKey)
+                        .ifPresent(platformStreamRepository::delete);
                 cache.clear();
             }
         } finally {
-            DbState.updateUpdatedAt();
+            dbStateRepository.updateUpdatedAt();
         }
-        return Response.accepted().build();
+        return ResponseEntity.accepted().build();
     }
 
-    @PATCH
-    @Path("/v1/platform-release/{platformKey}/{streamKey}/{version}")
+    @PatchMapping(value = "/v1/platform-release/{platformKey}/{streamKey}/{version}", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
     @SecurityRequirement(name = "Authentication")
-    @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
     @Transactional
     @Operation(summary = "Patches a PlatformRelease", description = "Invoke this endpoint when maintaining a platform release")
-    @APIResponses({
-            @APIResponse(responseCode = "202", name = "Accepted", description = "If invocation is successful"),
-            @APIResponse(responseCode = "404", name = "Not Found", description = "If Platform/Stream/Release were not found")
+    @ApiResponses({
+            @ApiResponse(responseCode = "202", description = "If invocation is successful"),
+            @ApiResponse(responseCode = "404", description = "If Platform/Stream/Release were not found")
     })
-    public Response patchPlatformRelease(
-            @NotNull(message = "platformKey is missing") @PathParam("platformKey") String platformKey,
-            @NotNull(message = "streamKey is missing") @PathParam("streamKey") String streamKey,
-            @NotNull(message = "version is missing") @PathParam("version") String version,
-            @FormParam("unlisted") boolean unlisted,
-            @FormParam("pinned") boolean pinned,
-            @FormParam("metadata") String metadataJson) {
+    public ResponseEntity<Object> patchPlatformRelease(
+            @NotNull(message = "platformKey is missing") @PathVariable("platformKey") String platformKey,
+            @NotNull(message = "streamKey is missing") @PathVariable("streamKey") String streamKey,
+            @NotNull(message = "version is missing") @PathVariable("version") String version,
+            @RequestParam(name = "unlisted", required = false, defaultValue = "false") boolean unlisted,
+            @RequestParam(name = "pinned", required = false, defaultValue = "false") boolean pinned,
+            @RequestParam(name = "metadata", required = false) String metadataJson) {
         Map<String, Object> metadata = null;
         if (metadataJson != null && !metadataJson.isEmpty()) {
             try {
@@ -327,12 +349,7 @@ public class AdminApi {
                 throw new BadRequestException("Invalid metadata JSON", e);
             }
         }
-        Platform platform = Platform.findByKey(platformKey)
-                .orElseThrow(() -> new NotFoundException("Platform not found"));
-        PlatformStream stream = PlatformStream.findByNaturalKey(platform, streamKey)
-                .orElseThrow(() -> new NotFoundException("Platform Stream not found"));
-        PlatformRelease platformRelease = PlatformRelease.findByNaturalKey(stream, version)
-                .orElseThrow(() -> new NotFoundException("Platform Release not found"));
+        PlatformRelease platformRelease = findPlatformRelease(platformKey, streamKey, version);
         // Perform changes and persist
         platformRelease.unlisted = unlisted;
         platformRelease.pinned = pinned;
@@ -340,26 +357,24 @@ public class AdminApi {
             platformRelease.metadata = metadata;
         }
         try {
-            platformRelease.persistAndFlush();
+            platformReleaseRepository.saveAndFlush(platformRelease);
             cache.clear();
         } finally {
-            DbState.updateUpdatedAt();
+            dbStateRepository.updateUpdatedAt();
         }
-        return Response.accepted().build();
+        return ResponseEntity.accepted().build();
     }
 
-    @PATCH
-    @Path("/v1/platform-release/{platformKey}/{streamKey}/{version}/category/{categoryKey}")
+    @PatchMapping(value = "/v1/platform-release/{platformKey}/{streamKey}/{version}/category/{categoryKey}", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
     @SecurityRequirement(name = "Authentication")
-    @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
     @Transactional
     @Operation(summary = "Patches a PlatformReleaseCategory", description = "Invoke this endpoint when the platform release needs to be set to unlisted")
-    public Response patchPlatformReleaseCategory(
-            @NotNull(message = "platformKey is missing") @PathParam("platformKey") String platformKey,
-            @NotNull(message = "streamKey is missing") @PathParam("streamKey") String streamKey,
-            @NotNull(message = "version is missing") @PathParam("version") String version,
-            @NotNull(message = "categoryKey is missing") @PathParam("categoryKey") String categoryKey,
-            @FormParam("metadata") String metadataJson) {
+    public ResponseEntity<Object> patchPlatformReleaseCategory(
+            @NotNull(message = "platformKey is missing") @PathVariable("platformKey") String platformKey,
+            @NotNull(message = "streamKey is missing") @PathVariable("streamKey") String streamKey,
+            @NotNull(message = "version is missing") @PathVariable("version") String version,
+            @NotNull(message = "categoryKey is missing") @PathVariable("categoryKey") String categoryKey,
+            @RequestParam(name = "metadata", required = false) String metadataJson) {
         Map<String, Object> metadata;
         if (metadataJson != null && !metadataJson.isEmpty()) {
             try {
@@ -369,43 +384,37 @@ public class AdminApi {
             }
         } else {
             // Since metadata is the only parameter, return NO_CONTENT
-            return Response.noContent().build();
+            return ResponseEntity.noContent().build();
         }
-        Platform platform = Platform.findByKey(platformKey)
-                .orElseThrow(() -> new NotFoundException("Platform not found"));
-        PlatformStream stream = PlatformStream.findByNaturalKey(platform, streamKey)
-                .orElseThrow(() -> new NotFoundException("Platform Stream not found"));
-        PlatformRelease platformRelease = PlatformRelease.findByNaturalKey(stream, version)
-                .orElseThrow(() -> new NotFoundException("Platform Release not found"));
-        Category category = Category.findByKey(categoryKey)
+        PlatformRelease platformRelease = findPlatformRelease(platformKey, streamKey, version);
+        Category category = categoryRepository.findByCategoryKey(categoryKey)
                 .orElseThrow(() -> new NotFoundException("Category not found"));
-        PlatformReleaseCategory prc = PlatformReleaseCategory.findByNaturalKey(platformRelease, category)
+        PlatformReleaseCategory prc = platformReleaseCategoryRepository
+                .findByPlatformReleaseAndCategory(platformRelease, category)
                 .orElseThrow(() -> new NotFoundException("Platform Release Category not found"));
         // Perform changes and persist
         prc.metadata = metadata;
         try {
-            prc.persistAndFlush();
+            platformReleaseCategoryRepository.saveAndFlush(prc);
             cache.clear();
         } finally {
-            DbState.updateUpdatedAt();
+            dbStateRepository.updateUpdatedAt();
         }
-        return Response.accepted().build();
+        return ResponseEntity.accepted().build();
     }
 
-    @PATCH
-    @Path("/v1/platform-release/{platformKey}/{streamKey}/{version}/extension/{extensionGroupId}/{extensionArtifactId}/{extensionVersion}")
+    @PatchMapping(value = "/v1/platform-release/{platformKey}/{streamKey}/{version}/extension/{extensionGroupId}/{extensionArtifactId}/{extensionVersion}", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
     @SecurityRequirement(name = "Authentication")
-    @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
     @Transactional
     @Operation(summary = "Patches a PlatformExtension", description = "Invoke this endpoint to patch a PlatformExtension")
-    public Response patchPlatformExtension(
-            @NotNull(message = "platformKey is missing") @PathParam("platformKey") String platformKey,
-            @NotNull(message = "streamKey is missing") @PathParam("streamKey") String streamKey,
-            @NotNull(message = "version is missing") @PathParam("version") String version,
-            @NotNull(message = "extensionGroupId is missing") @PathParam("extensionGroupId") String extensionGroupId,
-            @NotNull(message = "extensionArtifactId is missing") @PathParam("extensionArtifactId") String extensionArtifactId,
-            @NotNull(message = "extensionVersion is missing") @PathParam("extensionVersion") String extensionVersion,
-            @FormParam("metadata") String metadataJson) {
+    public ResponseEntity<Object> patchPlatformExtension(
+            @NotNull(message = "platformKey is missing") @PathVariable("platformKey") String platformKey,
+            @NotNull(message = "streamKey is missing") @PathVariable("streamKey") String streamKey,
+            @NotNull(message = "version is missing") @PathVariable("version") String version,
+            @NotNull(message = "extensionGroupId is missing") @PathVariable("extensionGroupId") String extensionGroupId,
+            @NotNull(message = "extensionArtifactId is missing") @PathVariable("extensionArtifactId") String extensionArtifactId,
+            @NotNull(message = "extensionVersion is missing") @PathVariable("extensionVersion") String extensionVersion,
+            @RequestParam(name = "metadata", required = false) String metadataJson) {
         Map<String, Object> metadata;
         if (metadataJson != null && !metadataJson.isEmpty()) {
             try {
@@ -415,73 +424,66 @@ public class AdminApi {
             }
         } else {
             // Since metadata is the only parameter, return NO_CONTENT
-            return Response.noContent().build();
+            return ResponseEntity.noContent().build();
         }
-        Platform platform = Platform.findByKey(platformKey)
-                .orElseThrow(() -> new NotFoundException("Platform not found"));
-        PlatformStream stream = PlatformStream.findByNaturalKey(platform, streamKey)
-                .orElseThrow(() -> new NotFoundException("Platform Stream not found"));
-        PlatformRelease platformRelease = PlatformRelease.findByNaturalKey(stream, version)
-                .orElseThrow(() -> new NotFoundException("Platform Release not found"));
-        ExtensionRelease extensionRelease = ExtensionRelease.findByGAV(extensionGroupId, extensionArtifactId, extensionVersion)
+        PlatformRelease platformRelease = findPlatformRelease(platformKey, streamKey, version);
+        ExtensionRelease extensionRelease = extensionReleaseRepository
+                .findByGAV(extensionGroupId, extensionArtifactId, extensionVersion)
                 .orElseThrow(() -> new NotFoundException("Extension Release not found"));
-        PlatformExtension platformExtension = PlatformExtension.findByNaturalKey(platformRelease, extensionRelease)
+        PlatformExtension platformExtension = platformExtensionRepository
+                .findByPlatformReleaseAndExtensionRelease(platformRelease, extensionRelease)
                 .orElseThrow(() -> new NotFoundException("Platform Extension not found"));
         // Perform changes and persist
         platformExtension.metadata = metadata;
         try {
-            platformExtension.persistAndFlush();
+            platformExtensionRepository.saveAndFlush(platformExtension);
             cache.clear();
         } finally {
-            DbState.updateUpdatedAt();
+            dbStateRepository.updateUpdatedAt();
         }
-        return Response.accepted().build();
+        return ResponseEntity.accepted().build();
     }
 
-    @PATCH
-    @Path("/v1/extension/{groupId}/{artifactId}")
+    @PatchMapping(value = "/v1/extension/{groupId}/{artifactId}", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
     @SecurityRequirement(name = "Authentication")
-    @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
     @Transactional
     @Operation(summary = "Patches an Extension")
-    @APIResponses({
-            @APIResponse(responseCode = "202", name = "Accepted", description = "If invocation is successful"),
-            @APIResponse(responseCode = "404", name = "Not Found", description = "If Platform/Stream/Release were not found")
+    @ApiResponses({
+            @ApiResponse(responseCode = "202", description = "If invocation is successful"),
+            @ApiResponse(responseCode = "404", description = "If Platform/Stream/Release were not found")
     })
-    public Response patchExtension(
-            @NotNull(message = "groupId is missing") @PathParam("groupId") String groupId,
-            @NotNull(message = "artifactId is missing") @PathParam("artifactId") String artifactId,
-            @FormParam("name") String name,
-            @FormParam("description") String description) {
-        Extension extension = Extension.findByGA(groupId, artifactId)
+    public ResponseEntity<Object> patchExtension(
+            @NotNull(message = "groupId is missing") @PathVariable("groupId") String groupId,
+            @NotNull(message = "artifactId is missing") @PathVariable("artifactId") String artifactId,
+            @RequestParam(name = "name", required = false) String name,
+            @RequestParam(name = "description", required = false) String description) {
+        Extension extension = extensionRepository.findByGA(groupId, artifactId)
                 .orElseThrow(() -> new NotFoundException("Extension not found"));
         extension.name = name;
         extension.description = description;
         try {
-            extension.persist();
+            extensionRepository.save(extension);
             cache.clear();
         } finally {
-            DbState.updateUpdatedAt();
+            dbStateRepository.updateUpdatedAt();
         }
-        return Response.accepted().build();
+        return ResponseEntity.accepted().build();
     }
 
-    @PATCH
-    @Path("/v1/extension/{groupId}/{artifactId}/{version}")
+    @PatchMapping(value = "/v1/extension/{groupId}/{artifactId}/{version}", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
     @SecurityRequirement(name = "Authentication")
-    @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
     @Transactional
     @Operation(summary = "Patches an Extension Release")
-    @APIResponses({
-            @APIResponse(responseCode = "202", name = "Accepted", description = "If invocation is successful"),
-            @APIResponse(responseCode = "204", name = "No Content", description = "If metadata is empty"),
-            @APIResponse(responseCode = "404", name = "Not Found", description = "If Extension Release was not found")
+    @ApiResponses({
+            @ApiResponse(responseCode = "202", description = "If invocation is successful"),
+            @ApiResponse(responseCode = "204", description = "If metadata is empty"),
+            @ApiResponse(responseCode = "404", description = "If Extension Release was not found")
     })
-    public Response patchExtensionRelease(
-            @NotNull(message = "groupId is missing") @PathParam("groupId") String groupId,
-            @NotNull(message = "artifactId is missing") @PathParam("artifactId") String artifactId,
-            @NotNull(message = "version is missing") @PathParam("version") String version,
-            @NotNull(message = "metadata is required") @FormParam("metadata") String metadataJson) {
+    public ResponseEntity<Object> patchExtensionRelease(
+            @NotNull(message = "groupId is missing") @PathVariable("groupId") String groupId,
+            @NotNull(message = "artifactId is missing") @PathVariable("artifactId") String artifactId,
+            @NotNull(message = "version is missing") @PathVariable("version") String version,
+            @NotNull(message = "metadata is required") @RequestParam(name = "metadata", required = false) String metadataJson) {
         Map<String, Object> metadata;
         if (metadataJson != null && !metadataJson.isEmpty()) {
             try {
@@ -491,19 +493,27 @@ public class AdminApi {
             }
         } else {
             // Since metadata is the only parameter, return NO_CONTENT
-            return Response.noContent().build();
+            return ResponseEntity.noContent().build();
         }
-        ExtensionRelease extensionRelease = ExtensionRelease.findByGAV(groupId, artifactId, version)
+        ExtensionRelease extensionRelease = extensionReleaseRepository.findByGAV(groupId, artifactId, version)
                 .orElseThrow(() -> new NotFoundException("Extension Release not found"));
         // Perform changes and persist
         try {
             extensionRelease.metadata = metadata;
-            extensionRelease.persist();
+            extensionReleaseRepository.save(extensionRelease);
             cache.clear();
         } finally {
-            DbState.updateUpdatedAt();
+            dbStateRepository.updateUpdatedAt();
         }
-        return Response.accepted().build();
+        return ResponseEntity.accepted().build();
     }
 
+    private PlatformRelease findPlatformRelease(String platformKey, String streamKey, String version) {
+        Platform platform = platformRepository.findByPlatformKey(platformKey)
+                .orElseThrow(() -> new NotFoundException("Platform not found"));
+        PlatformStream stream = platformStreamRepository.findByPlatformAndStreamKey(platform, streamKey)
+                .orElseThrow(() -> new NotFoundException("Platform Stream not found"));
+        return platformReleaseRepository.findByPlatformStreamAndVersion(stream, version)
+                .orElseThrow(() -> new NotFoundException("Platform Release not found"));
+    }
 }

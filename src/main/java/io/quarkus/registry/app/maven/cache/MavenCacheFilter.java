@@ -5,163 +5,161 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 
-import org.eclipse.microprofile.config.inject.ConfigProperty;
-import org.jboss.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.ContentCachingResponseWrapper;
 
-import jakarta.enterprise.inject.Instance;
-import jakarta.inject.Inject;
-import jakarta.ws.rs.container.ContainerRequestContext;
-import jakarta.ws.rs.container.ContainerRequestFilter;
-import jakarta.ws.rs.container.ContainerResponseContext;
-import jakarta.ws.rs.container.ContainerResponseFilter;
-import jakarta.ws.rs.core.EntityTag;
-import jakarta.ws.rs.core.Response;
-import jakarta.ws.rs.ext.Provider;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
 /**
  * Serve the response from cache if available
  */
-@Provider
-public class MavenCacheFilter implements ContainerRequestFilter, ContainerResponseFilter {
+@Component
+@Order(Ordered.LOWEST_PRECEDENCE)
+public class MavenCacheFilter extends OncePerRequestFilter {
 
-    private static final Logger log = Logger.getLogger(MavenCacheFilter.class);
+    private static final Logger log = LoggerFactory.getLogger(MavenCacheFilter.class);
 
-    @Inject
-    MavenCache mavenCache;
+    private final MavenCache mavenCache;
 
-    @ConfigProperty(name = "maven.cache.path", defaultValue = "/maven")
-    Instance<String> pathToCache;
+    @Value("${maven.cache.path:/maven}")
+    String pathToCache;
 
-    @ConfigProperty(name = "maven.cache.header.cache-control", defaultValue = "no-cache") // Check for etag everytime
-    Instance<String> headerCacheControl;
+    @Value("${maven.cache.header.cache-control:no-cache}") // Check for etag everytime
+    String headerCacheControl;
 
-    @ConfigProperty(name = "maven.cache.enabled", defaultValue = "true")
-    Instance<Boolean> enabled;
+    @Value("${maven.cache.enabled:true}")
+    boolean enabled;
 
-    @Override
-    public void filter(ContainerRequestContext containerRequestContext) throws IOException {
-        if (isMavenGetRequest(containerRequestContext) && enabled.get()) {
-            String path = containerRequestContext.getUriInfo().getPath();
-            MavenResponse mavenResponse = mavenCache.getCache().getIfPresent(path);
-            if (mavenResponse != null) {
-
-                // Check if we can response with Not Modified
-                boolean notModified = notModified(containerRequestContext, mavenResponse);
-
-                if (notModified) {
-                    containerRequestContext.abortWith(toNotModifiedResponse(mavenResponse));
-                } else {
-                    log.debug("Serving [" + path + "] from cache");
-                    containerRequestContext.abortWith(toResponse(mavenResponse));
-                }
-            }
-            // Else fall through to the actual endpoint
-        }
+    public MavenCacheFilter(MavenCache mavenCache) {
+        this.mavenCache = mavenCache;
     }
 
     @Override
-    public void filter(ContainerRequestContext containerRequestContext, ContainerResponseContext containerResponseContext)
-            throws IOException {
-        if (isMavenGetRequest(containerRequestContext) && !isCachedResponse(containerResponseContext)
-                && containerResponseContext.getStatus() == 200) {
-
-            MavenResponse mavenResponse = toMavenResponse(containerResponseContext);
-
-            if (enabled.get()) {
-                String path = containerRequestContext.getUriInfo().getPath();
-                log.debug("Caching [" + path + "]");
-                mavenCache.getCache().put(path, mavenResponse);
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+            throws ServletException, IOException {
+        if (!isMavenGetRequest(request) || !enabled) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+        String path = getPath(request);
+        MavenResponse mavenResponse = mavenCache.getCache().getIfPresent(path);
+        if (mavenResponse != null) {
+            // Check if we can response with Not Modified
+            if (notModified(request, mavenResponse)) {
+                writeNotModifiedResponse(response, mavenResponse);
+            } else {
+                log.debug("Serving [{}] from cache", path);
+                writeResponse(response, mavenResponse);
             }
+            return;
+        }
+        // Else fall through to the actual endpoint
+        ContentCachingResponseWrapper responseWrapper = new ContentCachingResponseWrapper(response);
+        try {
+            filterChain.doFilter(request, responseWrapper);
+            if (responseWrapper.getStatus() == 200 && !isCachedResponse(responseWrapper)) {
+                MavenResponse toCache = toMavenResponse(responseWrapper);
+                log.debug("Caching [{}]", path);
+                mavenCache.getCache().put(path, toCache);
+            }
+        } finally {
+            responseWrapper.copyBodyToResponse();
         }
     }
 
-    private boolean notModified(ContainerRequestContext containerRequestContext, MavenResponse cachedResponse) {
+    private boolean notModified(HttpServletRequest request, MavenResponse cachedResponse) {
         // Here we first check the request header for If-None-Match (etag) or If-Modified-Since (last-modified)
 
         // First Check Etag
-        String givenEtag = containerRequestContext.getHeaderString(IF_NONE_MATCH);
+        String givenEtag = request.getHeader(IF_NONE_MATCH);
         String cachedEtag = cachedResponse.getHeaders().get(ETAG);
         if (givenEtag != null && givenEtag.equals(cachedEtag)) {
             return true;
         }
 
         // Secondly Check Last Modified
-        String givenLastModified = containerRequestContext.getHeaderString(IF_MODIFIED_SINCE);
+        String givenLastModified = request.getHeader(IF_MODIFIED_SINCE);
         String cachedLastModified = cachedResponse.getHeaders().get(LAST_MODIFIED);
         return givenLastModified != null && givenLastModified.equals(cachedLastModified);
     }
 
-    private MavenResponse toMavenResponse(ContainerResponseContext containerResponseContext) {
-        MavenResponse mavenResponse = new MavenResponse(containerResponseContext.getStatus(),
-                containerResponseContext.getEntity());
+    private MavenResponse toMavenResponse(ContentCachingResponseWrapper responseWrapper) {
+        byte[] content = responseWrapper.getContentAsByteArray();
+        MavenResponse mavenResponse = new MavenResponse(responseWrapper.getStatus(), content);
 
         // We add some cache related headers here for when using via a CDN etc.
         // see https://www.keycdn.com/blog/http-cache-headers#no-cache-and-no-store
 
         // Cache control
-        containerResponseContext.getHeaders().add(CACHE_CONTROL, headerCacheControl.get());
+        responseWrapper.addHeader(CACHE_CONTROL, headerCacheControl);
 
         // Etag (to be compared with If-None-Match)
         // We try and set this based on the actual content. This means that if the content did not change (even if we recreate the cache)
         // the etag will be the same.
-        EntityTag etag = containerResponseContext.getEntityTag();
-        if (etag == null) {
-            // etag - We create a hash from the Response if this is a String, so even if the cache clear, if the content is the same, the etag will also be
-            if (containerResponseContext.getEntityClass() == String.class) {
-                String content = (String) containerResponseContext.getEntity();
-                String uuid = UUID.nameUUIDFromBytes(content.getBytes()).toString();
-                containerResponseContext.getHeaders().add(ETAG, uuid);
-                // etag - Else we just use a UUID, this will change everytime our cache invalidate
-            } else {
-                String randomEtag = UUID.randomUUID().toString();
-                containerResponseContext.getHeaders().add(ETAG, randomEtag);
-            }
+        if (responseWrapper.getHeader(ETAG) == null) {
+            // etag - We create a hash from the Response content, so even if the cache clears, if the content is the same, the etag will also be
+            responseWrapper.addHeader(ETAG, UUID.nameUUIDFromBytes(content).toString());
         }
 
         // Last-Modified (to be compared with If-Modified-Since)
         // For now we set the date when we cached this, but a better way would be to get a date from when this was persisted (changed)
         LocalDateTime cachedAt = LocalDateTime.now(ZoneOffset.UTC);
-        containerResponseContext.getHeaders().add(LAST_MODIFIED, cachedAt.format(lastModifiedDateFormatter));
+        responseWrapper.addHeader(LAST_MODIFIED, cachedAt.format(lastModifiedDateFormatter));
 
         // Now we should have all the headers we want to cache
-        Set<String> headerKeys = containerResponseContext.getStringHeaders().keySet();
-        for (String key : headerKeys) {
-            mavenResponse.addHeader(key, containerResponseContext.getHeaderString(key));
+        for (String key : responseWrapper.getHeaderNames()) {
+            mavenResponse.addHeader(key, responseWrapper.getHeader(key));
         }
 
         return mavenResponse;
     }
 
-    private Response toNotModifiedResponse(MavenResponse mavenResponse) {
-        Response.ResponseBuilder responseBuilder = Response.status(NOT_MODIFIED_STATUS);
-        responseBuilder = responseBuilder.header(VIA, VIA_CACHE);
+    private void writeNotModifiedResponse(HttpServletResponse response, MavenResponse mavenResponse) {
+        response.setStatus(NOT_MODIFIED_STATUS);
+        response.setHeader(VIA, VIA_CACHE);
         for (Map.Entry<String, String> header : mavenResponse.getHeaders().entrySet()) {
-            responseBuilder.header(header.getKey(), header.getValue());
+            response.setHeader(header.getKey(), header.getValue());
         }
-        return responseBuilder.build();
     }
 
-    private Response toResponse(MavenResponse mavenResponse) {
-        Response.ResponseBuilder responseBuilder = Response.status(mavenResponse.getStatus())
-                .entity(mavenResponse.getResponse());
-        responseBuilder = responseBuilder.header(VIA, VIA_CACHE);
+    private void writeResponse(HttpServletResponse response, MavenResponse mavenResponse) throws IOException {
+        response.setStatus(mavenResponse.getStatus());
+        response.setHeader(VIA, VIA_CACHE);
         for (Map.Entry<String, String> header : mavenResponse.getHeaders().entrySet()) {
-            responseBuilder.header(header.getKey(), header.getValue());
+            response.setHeader(header.getKey(), header.getValue());
         }
-        return responseBuilder.build();
+        byte[] body = mavenResponse.getResponse();
+        if (body != null && body.length > 0) {
+            response.getOutputStream().write(body);
+        }
     }
 
-    private boolean isMavenGetRequest(ContainerRequestContext containerRequestContext) {
-        String path = containerRequestContext.getUriInfo().getPath();
-        return path.startsWith(pathToCache.get()) && containerRequestContext.getMethod().equalsIgnoreCase(GET);
+    private boolean isMavenGetRequest(HttpServletRequest request) {
+        return getPath(request).startsWith(pathToCache) && GET.equalsIgnoreCase(request.getMethod());
     }
 
-    private boolean isCachedResponse(ContainerResponseContext containerResponseContext) {
-        return containerResponseContext.getHeaderString(VIA) != null && containerResponseContext.getHeaderString(VIA)
-                .equals(VIA_CACHE);
+    private boolean isCachedResponse(HttpServletResponse response) {
+        return VIA_CACHE.equals(response.getHeader(VIA));
+    }
+
+    private static String getPath(HttpServletRequest request) {
+        String contextPath = request.getContextPath();
+        String uri = request.getRequestURI();
+        if (contextPath != null && !contextPath.isEmpty() && uri.startsWith(contextPath)) {
+            return uri.substring(contextPath.length());
+        }
+        return uri;
     }
 
     private static final String GET = "GET";

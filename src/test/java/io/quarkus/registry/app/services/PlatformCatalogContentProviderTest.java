@@ -8,6 +8,7 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
 
 import io.quarkus.maven.dependency.ArtifactCoords;
 import io.quarkus.registry.Constants;
@@ -15,14 +16,11 @@ import io.quarkus.registry.app.BaseTest;
 import io.quarkus.registry.catalog.CatalogMapperHelper;
 import io.quarkus.registry.catalog.ExtensionCatalog;
 import io.quarkus.registry.catalog.ExtensionCatalogImpl;
-import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
-import jakarta.ws.rs.core.MediaType;
 
 /**
  * Tests if the {@link ExtensionCatalog} content is generated correctly
  */
-@QuarkusTest
 public class PlatformCatalogContentProviderTest extends BaseTest {
 
     @Test
@@ -60,7 +58,7 @@ public class PlatformCatalogContentProviderTest extends BaseTest {
                     .get(url)
                     .then()
                     .statusCode(200)
-                    .contentType(MediaType.APPLICATION_JSON)
+                    .contentType(MediaType.APPLICATION_JSON_VALUE)
                     .extract().asInputStream();
 
             ExtensionCatalog result = CatalogMapperHelper.deserialize(resultStream, ExtensionCatalogImpl.Builder.class).build();
@@ -79,7 +77,7 @@ public class PlatformCatalogContentProviderTest extends BaseTest {
                     .get(url)
                     .then()
                     .statusCode(200)
-                    .contentType(MediaType.APPLICATION_JSON)
+                    .contentType(MediaType.APPLICATION_JSON_VALUE)
                     .extract().asInputStream();
 
             ExtensionCatalog result = CatalogMapperHelper.deserialize(resultStream, ExtensionCatalogImpl.Builder.class).build();

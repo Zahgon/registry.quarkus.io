@@ -2,97 +2,49 @@ package io.quarkus.registry.app.maven;
 
 import java.io.StringWriter;
 
-import io.quarkus.cache.CacheResult;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Component;
+
 import io.quarkus.maven.dependency.ArtifactCoords;
-import io.quarkus.registry.Constants;
-import io.quarkus.registry.app.CacheNames;
 import io.quarkus.registry.config.RegistriesConfigMapperHelper;
 import io.quarkus.registry.config.RegistryConfig;
-import io.quarkus.registry.config.RegistryDescriptorConfig;
-import io.quarkus.registry.config.RegistryMavenConfig;
-import io.quarkus.registry.config.RegistryMavenRepoConfig;
-import io.quarkus.registry.config.RegistryNonPlatformExtensionsConfig;
-import io.quarkus.registry.config.RegistryPlatformsConfig;
-import io.quarkus.registry.config.RegistryQuarkusVersionsConfig;
-import jakarta.inject.Inject;
-import jakarta.inject.Singleton;
-import jakarta.ws.rs.core.HttpHeaders;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import jakarta.ws.rs.core.UriInfo;
 
-@Singleton
+@Component
 public class RegistryDescriptorContentProvider implements ArtifactContentProvider {
 
-    @Inject
-    MavenConfig mavenConfig;
+    private final MavenConfig mavenConfig;
+
+    private final RegistryConfigFactory registryConfigFactory;
+
+    public RegistryDescriptorContentProvider(MavenConfig mavenConfig, RegistryConfigFactory registryConfigFactory) {
+        this.mavenConfig = mavenConfig;
+        this.registryConfigFactory = registryConfigFactory;
+    }
 
     @Override
-    public boolean supports(ArtifactCoords artifact, UriInfo uriInfo) {
+    public boolean supports(ArtifactCoords artifact, MavenRequest request) {
         return mavenConfig.matchesRegistryDescriptor(artifact);
     }
 
     @Override
-    @CacheResult(cacheName = CacheNames.DESCRIPTOR)
-    public Response provide(ArtifactCoords artifact, UriInfo uriInfo) throws Exception {
+    public ResponseEntity<String> provide(ArtifactCoords artifact, MavenRequest request) throws Exception {
         StringWriter sw = new StringWriter();
-        RegistryConfig registryConfig = getRegistryConfig(uriInfo);
+        RegistryConfig registryConfig = registryConfigFactory.getRegistryConfig();
         RegistriesConfigMapperHelper.toJson(registryConfig, sw);
         String result = sw.toString();
-        final String checksumSuffix = ArtifactParser.getChecksumSuffix(uriInfo.getPathSegments(), artifact);
-        String contentType = MediaType.APPLICATION_JSON;
+        final String checksumSuffix = ArtifactParser.getChecksumSuffix(request.pathSegments(), artifact);
+        String contentType = MediaType.APPLICATION_JSON_VALUE;
         if (ArtifactParser.SUFFIX_MD5.equals(checksumSuffix)) {
             result = HashUtil.md5(result);
-            contentType = MediaType.TEXT_PLAIN;
+            contentType = MediaType.TEXT_PLAIN_VALUE;
         } else if (ArtifactParser.SUFFIX_SHA1.equals(checksumSuffix)) {
             result = HashUtil.sha1(result);
-            contentType = MediaType.TEXT_PLAIN;
+            contentType = MediaType.TEXT_PLAIN_VALUE;
         }
-        return Response.ok(result)
+        return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_TYPE, contentType)
-                .build();
-    }
-
-    @CacheResult(cacheName = CacheNames.DESCRIPTOR)
-    RegistryConfig getRegistryConfig(UriInfo uriInfo) {
-        final RegistryConfig.Mutable qer = RegistryConfig.builder();
-        qer.setId(mavenConfig.getRegistryId());
-
-        final RegistryDescriptorConfig.Mutable descriptor = RegistryDescriptorConfig.builder();
-        descriptor.setArtifact(
-                ArtifactCoords.of(mavenConfig.getRegistryGroupId(),
-                        Constants.DEFAULT_REGISTRY_DESCRIPTOR_ARTIFACT_ID, null,
-                        Constants.JSON, Constants.DEFAULT_REGISTRY_ARTIFACT_VERSION));
-        qer.setDescriptor(descriptor.build());
-
-        final RegistryMavenConfig.Mutable registryMavenConfig = RegistryMavenConfig.builder();
-
-        final RegistryPlatformsConfig.Mutable platformsConfig = RegistryPlatformsConfig.builder();
-        platformsConfig.setArtifact(ArtifactCoords.of(mavenConfig.getRegistryGroupId(),
-                Constants.DEFAULT_REGISTRY_PLATFORMS_CATALOG_ARTIFACT_ID, null, Constants.JSON,
-                Constants.DEFAULT_REGISTRY_ARTIFACT_VERSION));
-        mavenConfig.getExtensionCatalogIncluded().ifPresent(platformsConfig::setExtensionCatalogsIncluded);
-        qer.setPlatforms(platformsConfig.build());
-
-        if (mavenConfig.supportsNonPlatforms()) {
-            final RegistryNonPlatformExtensionsConfig.Mutable nonPlatformExtensionsConfig = RegistryNonPlatformExtensionsConfig
-                    .builder();
-            nonPlatformExtensionsConfig.setArtifact(ArtifactCoords.of(mavenConfig.getRegistryGroupId(),
-                    Constants.DEFAULT_REGISTRY_NON_PLATFORM_EXTENSIONS_CATALOG_ARTIFACT_ID, null, Constants.JSON,
-                    Constants.DEFAULT_REGISTRY_ARTIFACT_VERSION));
-            qer.setNonPlatformExtensions(nonPlatformExtensionsConfig.build());
-        }
-        if (mavenConfig.getQuarkusVersionsExpression().isPresent()) {
-            final RegistryQuarkusVersionsConfig.Mutable quarkusVersionsConfig = RegistryQuarkusVersionsConfig.builder();
-            quarkusVersionsConfig.setRecognizedVersionsExpression(mavenConfig.getQuarkusVersionsExpression().orElse(null));
-            quarkusVersionsConfig.setExclusiveProvider(mavenConfig.getQuarkusVersionsExclusiveProvider().orElse(false));
-            qer.setQuarkusVersions(quarkusVersionsConfig.build());
-        }
-        final RegistryMavenRepoConfig.Mutable mavenRepo = RegistryMavenRepoConfig.builder();
-        mavenRepo.setId(mavenConfig.getRegistryId());
-        mavenRepo.setUrl(mavenConfig.getRegistryUrl());
-        registryMavenConfig.setRepository(mavenRepo.build());
-        qer.setMaven(registryMavenConfig.build());
-        return qer.build();
+                .body(result);
     }
 }

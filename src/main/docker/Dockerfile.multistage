@@ -1,27 +1,30 @@
 ## Stage 1 : build with maven builder image
-FROM registry.access.redhat.com/quarkus/mandrel-for-jdk-21-rhel8:23.1 AS build
+FROM registry.access.redhat.com/ubi8/openjdk-21:1.21 AS build
 ARG MAVEN_BUILD_EXTRA_ARGS=
 RUN echo "$MAVEN_BUILD_EXTRA_ARGS"
-COPY --chown=quarkus:quarkus mvnw /code/mvnw
-COPY --chown=quarkus:quarkus .mvn /code/.mvn
-COPY --chown=quarkus:quarkus pom.xml /code/
-USER quarkus
+USER root
+COPY mvnw /code/mvnw
+COPY .mvn /code/.mvn
+COPY pom.xml /code/
+RUN chown -R 185 /code
+USER 185
 WORKDIR /code
 RUN ./mvnw -B -ntp org.apache.maven.plugins:maven-dependency-plugin:3.7.1:go-offline
 RUN ./mvnw -B -ntp license:download-licenses
-COPY src /code/src
-RUN ./mvnw -ntp package -Pnative -DskipTests $MAVEN_BUILD_EXTRA_ARGS
+COPY --chown=185 src /code/src
+RUN ./mvnw -ntp package -DskipTests $MAVEN_BUILD_EXTRA_ARGS
 
 ## Stage 2 : create the docker final image
-FROM registry.access.redhat.com/ubi8/ubi-minimal:8.10
+FROM registry.access.redhat.com/ubi8/openjdk-21-runtime:1.21
 WORKDIR /work/
+USER root
 RUN chown 1001 /work \
     && chmod "g+rwX" /work \
     && chown 1001:root /work
 
-COPY --from=build --chown=1001 /code/target/*-runner /work/application
+COPY --from=build --chown=1001 /code/target/quarkus-registry-app-*.jar /work/application.jar
 COPY --from=build --chown=1001 /code/target/generated-resources/licenses /licenses
 EXPOSE 8080
 USER 1001
 
-CMD ["./application", "-Dquarkus.http.host=0.0.0.0"]
+CMD ["java", "-jar", "/work/application.jar", "--server.address=0.0.0.0"]

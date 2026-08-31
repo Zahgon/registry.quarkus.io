@@ -1,32 +1,22 @@
 package io.quarkus.registry.app.model;
 
-import static io.quarkus.panache.common.Parameters.with;
-
 import java.util.ArrayList;
-import java.util.Collection;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
-import java.util.stream.Collectors;
 
-import org.hibernate.Session;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.NaturalId;
 import org.hibernate.type.SqlTypes;
 
-import io.quarkus.maven.dependency.ArtifactCoords;
 import io.quarkus.registry.app.util.Version;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EntityManager;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.NamedQueries;
 import jakarta.persistence.NamedQuery;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.PrePersist;
-import jakarta.persistence.TypedQuery;
 
 @Entity
 @NamedQueries({
@@ -181,90 +171,5 @@ public class PlatformRelease extends BaseEntity {
     @Override
     public int hashCode() {
         return Objects.hash(platformStream, version);
-    }
-
-    public static Optional<PlatformRelease> findByNaturalKey(PlatformStream platformStream, String version) {
-        Session session = getEntityManager().unwrap(Session.class);
-        return session.byNaturalId(PlatformRelease.class)
-                .using("platformStream", platformStream)
-                .using("version", version)
-                .loadOptional();
-    }
-
-    public static List<PlatformRelease> findLatest(String quarkusCore) {
-        EntityManager em = getEntityManager();
-        TypedQuery<PlatformRelease> query;
-        boolean withQuarkusCore = quarkusCore != null && !quarkusCore.isBlank();
-        if (withQuarkusCore) {
-            query = em.createNamedQuery("PlatformRelease.findLatestByQuarkusCoreVersion", PlatformRelease.class)
-                    .setParameter(1, quarkusCore);
-        } else {
-            query = em.createNamedQuery("PlatformRelease.findLatest", PlatformRelease.class);
-        }
-        // Check if we can perform this directly in the SQL
-        var platformMap = new LinkedHashMap<Platform, List<PlatformRelease>>();
-        for (var item : query.getResultList()) {
-            var platformReleases = platformMap.computeIfAbsent(item.platformStream.platform,
-                    k -> new ArrayList<>());
-            // Add all versions until we find the latest stable one
-            boolean hasStableVersions = platformReleases.stream()
-                    .anyMatch(PlatformRelease::isVersionStable);
-            if (!hasStableVersions) {
-                platformReleases.add(item);
-            }
-        }
-        // Add pinned platforms to the result
-        if (!withQuarkusCore) {
-            var pinnedPlatforms = em.createNamedQuery("PlatformRelease.findPinned", PlatformRelease.class)
-                    .getResultList();
-            for (var item : pinnedPlatforms) {
-                platformMap.computeIfAbsent(item.platformStream.platform, k -> new ArrayList<>()).add(item);
-            }
-            // Add latest platforms from pinned streams
-            var pinnedStreams = em.createNamedQuery("PlatformRelease.findLatestPinnedStream", PlatformRelease.class)
-                    .getResultList();
-            for (var item : pinnedStreams) {
-                platformMap.computeIfAbsent(item.platformStream.platform, k -> new ArrayList<>()).add(item);
-            }
-        }
-        return platformMap.values().stream()
-                .flatMap(Collection::stream)
-                .collect(Collectors.toList());
-    }
-
-    public static Optional<PlatformRelease> findByPlatformKey(String platformKey, String version) {
-        return find("#PlatformRelease.findByPlatformKey", platformKey, version).firstResultOptional();
-    }
-
-    public static List<String> findQuarkusCores() {
-        return getEntityManager().createNamedQuery("PlatformRelease.findQuarkusCores", String.class)
-                .getResultList();
-    }
-
-    public static String findLatestQuarkusCore() {
-        return getEntityManager().createNamedQuery("PlatformRelease.findQuarkusCores", String.class)
-                .setMaxResults(1)
-                .getResultStream()
-                .findFirst().orElse(null);
-    }
-
-
-    public static boolean artifactCoordinatesExist(ArtifactCoords artifact) {
-        return count("#PlatformRelease.countArtifactCoordinates",
-                with("groupId", artifact.getGroupId())
-                        .and("artifactId", artifact.getArtifactId())
-                        .and("version", artifact.getClassifier())) == 1;
-    }
-
-    public static Optional<PlatformRelease> findByArtifactCoordinates(ArtifactCoords artifact) {
-        return find("#PlatformRelease.findByArtifactCoordinates",
-                with("groupId", artifact.getGroupId())
-                        .and("artifactId", artifact.getArtifactId())
-                        .and("version", artifact.getClassifier()))
-                .firstResultOptional();
-    }
-
-    public static List<PlatformRelease> findAllCorePlatforms() {
-        return list("#PlatformRelease.findAllCorePlatforms");
     }
 }

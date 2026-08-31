@@ -2,44 +2,36 @@ package io.quarkus.registry.app.maven;
 
 import java.util.Optional;
 
-import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
 import io.quarkus.maven.dependency.ArtifactCoords;
 import io.quarkus.registry.Constants;
 import jakarta.annotation.PostConstruct;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
 
-@ApplicationScoped
+@Component
 public class MavenConfig {
 
-    @Inject
-    @ConfigProperty(name = "quarkus.registry.id", defaultValue = Constants.DEFAULT_REGISTRY_ID)
+    @Value("${quarkus.registry.id:" + Constants.DEFAULT_REGISTRY_ID + "}")
     String registryId;
 
-    @Inject
-    @ConfigProperty(name = "quarkus.registry.maven-repo.url", defaultValue = Constants.DEFAULT_REGISTRY_MAVEN_REPO_URL)
+    @Value("${quarkus.registry.maven-repo.url:" + Constants.DEFAULT_REGISTRY_MAVEN_REPO_URL + "}")
     String registryUrl;
 
-    @Inject
-    @ConfigProperty(name = "quarkus.registry.groupId", defaultValue = Constants.DEFAULT_REGISTRY_GROUP_ID)
+    @Value("${quarkus.registry.groupId:" + Constants.DEFAULT_REGISTRY_GROUP_ID + "}")
     String registryGroupId;
 
-    @Inject
-    @ConfigProperty(name = "quarkus.registry.non-platform-extensions.support", defaultValue = "true")
+    @Value("${quarkus.registry.non-platform-extensions.support:true}")
     boolean supportsNonPlatforms;
 
-    @Inject
-    @ConfigProperty(name = "quarkus.registry.quarkus-versions.expression")
-    Optional<String> quarkusVersionsExpression;
+    @Value("${quarkus.registry.quarkus-versions.expression:#{null}}")
+    String quarkusVersionsExpression;
 
-    @Inject
-    @ConfigProperty(name = "quarkus.registry.quarkus-versions.exclusive-provider")
-    Optional<Boolean> quarkusVersionsExclusiveProvider;
+    @Value("${quarkus.registry.quarkus-versions.exclusive-provider:#{null}}")
+    Boolean quarkusVersionsExclusiveProvider;
 
-    @Inject
-    @ConfigProperty(name = "quarkus.registry.platform.extension-catalog-included")
-    Optional<Boolean> extensionCatalogIncluded;
+    @Value("${quarkus.registry.platform.extension-catalog-included:#{null}}")
+    Boolean extensionCatalogIncluded;
 
     private ArtifactCoords nonPlatformExtensionCoords;
 
@@ -120,15 +112,15 @@ public class MavenConfig {
     }
 
     public Optional<String> getQuarkusVersionsExpression() {
-        return quarkusVersionsExpression;
+        return Optional.ofNullable(quarkusVersionsExpression);
     }
 
     public Optional<Boolean> getQuarkusVersionsExclusiveProvider() {
-        return quarkusVersionsExclusiveProvider;
+        return Optional.ofNullable(quarkusVersionsExclusiveProvider);
     }
 
     public Optional<Boolean> getExtensionCatalogIncluded() {
-        return extensionCatalogIncluded;
+        return Optional.ofNullable(extensionCatalogIncluded);
     }
 
 }

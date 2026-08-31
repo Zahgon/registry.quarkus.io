@@ -3,20 +3,31 @@ package io.quarkus.registry.app.metrics;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
+import org.springframework.stereotype.Component;
+
 import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.config.MeterFilter;
+import io.micrometer.core.instrument.config.MeterFilterReply;
 import io.micrometer.core.instrument.distribution.DistributionStatisticConfig;
-import jakarta.inject.Singleton;
 
 /**
  * Enable histogram buckets for http.server.requests metric
  */
-@Singleton
+@Component
 public class HistogramMeterFilter implements MeterFilter {
     private static final Set<String> WRITE_METHODS = Set.of("POST", "PUT", "PATCH", "DELETE");
+    private static final Set<String> IGNORED_URIS = Set.of("/favicon.ico", "/", "/index.html");
     private static final Tag OP_READ = Tag.of("op", "r");
     private static final Tag OP_WRITE = Tag.of("op", "w");
+
+    @Override
+    public MeterFilterReply accept(Meter.Id id) {
+        if (isHttpServerRequests(id) && IGNORED_URIS.contains(id.getTag("uri"))) {
+            return MeterFilterReply.DENY;
+        }
+        return MeterFilterReply.NEUTRAL;
+    }
 
     @Override
     public Meter.Id map(Meter.Id id) {
@@ -37,9 +48,6 @@ public class HistogramMeterFilter implements MeterFilter {
     @Override
     public DistributionStatisticConfig configure(Meter.Id id, DistributionStatisticConfig config) {
         if (isHttpServerRequests(id)) {
-            //            if (id.getTags().contains(Outcome.CLIENT_ERROR.asTag())) {
-            //                return MeterFilter.deny().configure(id, config);
-            //            }
             return DistributionStatisticConfig.builder()
                     .percentilesHistogram(false) // histogram buckets (e.g. prometheus histogram_quantile)
                     .serviceLevelObjectives(

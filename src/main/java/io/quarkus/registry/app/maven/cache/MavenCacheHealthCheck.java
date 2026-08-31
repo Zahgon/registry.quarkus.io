@@ -1,39 +1,37 @@
 package io.quarkus.registry.app.maven.cache;
 
-import org.eclipse.microprofile.health.HealthCheck;
-import org.eclipse.microprofile.health.HealthCheckResponse;
-import org.eclipse.microprofile.health.Liveness;
+import org.springframework.boot.actuate.health.Health;
+import org.springframework.boot.actuate.health.HealthIndicator;
+import org.springframework.stereotype.Component;
 
 import com.github.benmanes.caffeine.cache.Cache;
-
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
 
 /**
  * Check the cache
  */
-@Liveness
-@ApplicationScoped
-public class MavenCacheHealthCheck implements HealthCheck {
+@Component("Maven cache health")
+public class MavenCacheHealthCheck implements HealthIndicator {
 
-    @Inject
-    MavenCache mavenCache;
+    private final MavenCache mavenCache;
+
+    public MavenCacheHealthCheck(MavenCache mavenCache) {
+        this.mavenCache = mavenCache;
+    }
 
     @Override
-    public HealthCheckResponse call() {
-        Cache cache = mavenCache.getCache();
-        return HealthCheckResponse.builder()
-                .name("Maven cache health")
-                .withData("last invalidate all time", mavenCache.getLastInvalidateTime().toString())
-                .withData("estimated size", cache.estimatedSize())
-                .withData("request count", cache.stats().requestCount())
-                .withData("hit count", cache.stats().hitCount())
-                .withData("miss count", cache.stats().missCount())
-                .withData("load count", cache.stats().loadCount())
-                .withData("eviction count", String.valueOf(cache.stats().evictionCount()))
-                .withData("hit rate", String.valueOf(cache.stats().hitRate()))
-                .withData("miss rate", String.valueOf(cache.stats().missRate()))
-                .up().build();
+    public Health health() {
+        Cache<?, ?> cache = mavenCache.getCache();
+        return Health.up()
+                .withDetail("last invalidate all time", mavenCache.getLastInvalidateTime().toString())
+                .withDetail("estimated size", cache.estimatedSize())
+                .withDetail("request count", cache.stats().requestCount())
+                .withDetail("hit count", cache.stats().hitCount())
+                .withDetail("miss count", cache.stats().missCount())
+                .withDetail("load count", cache.stats().loadCount())
+                .withDetail("eviction count", String.valueOf(cache.stats().evictionCount()))
+                .withDetail("hit rate", String.valueOf(cache.stats().hitRate()))
+                .withDetail("miss rate", String.valueOf(cache.stats().missRate()))
+                .build();
     }
 
 }

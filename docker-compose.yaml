@@ -4,9 +4,9 @@ services:
     image: quay.io/quarkus/registry-app
     environment:
       - TOKEN=test
-      - QUARKUS_DATASOURCE_USERNAME=postgresql
-      - QUARKUS_DATASOURCE_PASSWORD=postgresql
-      - QUARKUS_DATASOURCE_JDBC_URL=jdbc:postgresql://database:5432/registrydb
+      - SPRING_DATASOURCE_USERNAME=postgresql
+      - SPRING_DATASOURCE_PASSWORD=postgresql
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://database:5432/registrydb
     ports:
       - "8080:8080"
     depends_on:

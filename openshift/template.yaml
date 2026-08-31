@@ -69,14 +69,14 @@ objects:
                     secretKeyRef:
                       name: registry-db
                       key: db.name
-                - name: QUARKUS_DATASOURCE_JDBC_URL
+                - name: SPRING_DATASOURCE_URL
                   value: 'jdbc:postgresql://${REGISTRY_DB_HOST}:${REGISTRY_DB_PORT}/${REGISTRY_DB_NAME}'
-                - name: QUARKUS_DATASOURCE_USERNAME
+                - name: SPRING_DATASOURCE_USERNAME
                   valueFrom:
                     secretKeyRef:
                       name: registry-db
                       key: db.user
-                - name: QUARKUS_DATASOURCE_PASSWORD
+                - name: SPRING_DATASOURCE_PASSWORD
                   valueFrom:
                     secretKeyRef:
                       name: registry-db

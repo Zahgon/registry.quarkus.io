@@ -4,13 +4,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
-import org.hibernate.Session;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.NaturalId;
 import org.hibernate.type.SqlTypes;
@@ -73,22 +71,6 @@ public class Platform extends BaseEntity {
     public int hashCode() {
         return Objects.hash(platformKey);
     }
-
-    public static Optional<Platform> findByKey(String platformKey) {
-        Session session = getEntityManager().unwrap(Session.class);
-        return session.byNaturalId(Platform.class)
-                .using("platformKey", platformKey)
-                .loadOptional();
-    }
-
-    public static List<Platform> findMembersByPlatform(Platform platform) {
-        Session session = getEntityManager().unwrap(Session.class);
-        return session.createQuery("FROM Platform p WHERE p.platformKey like :platformKey AND p.platformType = :type", Platform.class)
-                .setParameter("platformKey", platform.platformKey +":%")
-                .setParameter("type", Type.M)
-                .getResultList();
-    }
-
 
     /**
      * Returns a friendly platform name based on the platform key

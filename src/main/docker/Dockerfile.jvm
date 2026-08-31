@@ -1,0 +1,28 @@
+####
+# This Dockerfile is used in order to build a container that runs the Spring Boot application on the JVM
+#
+# Before building the container image run:
+#
+# ./mvnw package
+#
+# Then, build the image with:
+#
+# docker build -f src/main/docker/Dockerfile.jvm -t quarkus/registry-app .
+#
+# Then run the container using:
+#
+# docker run -i --rm -p 8080:8080 quarkus/registry-app
+#
+###
+FROM registry.access.redhat.com/ubi8/openjdk-21-runtime:1.21
+WORKDIR /work/
+USER root
+RUN chown 1001 /work \
+    && chmod "g+rwX" /work \
+    && chown 1001:root /work
+COPY --chown=1001:root target/quarkus-registry-app-*.jar /work/application.jar
+
+EXPOSE 8080
+USER 1001
+
+CMD ["java", "-jar", "/work/application.jar", "--server.address=0.0.0.0"]

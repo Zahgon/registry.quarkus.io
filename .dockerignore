@@ -3,8 +3,5 @@
 !src
 !pom.xml
 !.mvn/*
-!target/*-runner
-!target/*-runner.jar
-!target/lib/*
-!target/quarkus-app/*
+!target/*.jar
 !maven-settings.xml

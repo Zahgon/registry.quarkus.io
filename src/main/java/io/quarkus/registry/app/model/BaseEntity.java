@@ -4,7 +4,6 @@ import java.time.Instant;
 
 import org.hibernate.annotations.ColumnDefault;
 
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.Column;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -15,7 +14,7 @@ import jakarta.persistence.MappedSuperclass;
  * The base class for all entities
  */
 @MappedSuperclass
-public abstract class BaseEntity extends PanacheEntityBase {
+public abstract class BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

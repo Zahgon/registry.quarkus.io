@@ -38,7 +38,7 @@ jobs:
 
       - name: Build
         run: |
-          ./mvnw -e -B -DskipTests=true clean package -Dnative
+          ./mvnw -e -B -DskipTests=true clean package
 
       - name: Docker Login
         uses: Azure/docker-login@v2
@@ -55,7 +55,7 @@ jobs:
         run: |
           IMAGE_TAG=$(git rev-parse --short=7 HEAD)
           # IMAGE_TAG=v${{ github.run_number }}
-          docker build -f src/main/docker/Dockerfile.native -t quay.io/quarkus/registry-app:latest .
+          docker build -f src/main/docker/Dockerfile.jvm -t quay.io/quarkus/registry-app:latest .
           docker tag quay.io/quarkus/registry-app:latest quay.io/quarkus/registry-app:${IMAGE_TAG}
           docker push quay.io/quarkus/registry-app:latest
           docker push quay.io/quarkus/registry-app:${IMAGE_TAG}

@@ -5,28 +5,33 @@ import java.io.StringWriter;
 import java.util.List;
 import java.util.Objects;
 
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Component;
+
 import io.quarkus.maven.dependency.ArtifactCoords;
 import io.quarkus.registry.Constants;
-import io.quarkus.registry.app.model.Category;
 import io.quarkus.registry.app.model.Platform;
 import io.quarkus.registry.app.model.PlatformRelease;
+import io.quarkus.registry.app.repository.PlatformReleaseRepository;
+import io.quarkus.registry.app.rest.NotFoundException;
 import io.quarkus.registry.catalog.CatalogMapperHelper;
 import io.quarkus.registry.catalog.Extension;
 import io.quarkus.registry.catalog.ExtensionCatalog;
 import io.quarkus.registry.catalog.ExtensionOrigin;
-import jakarta.inject.Inject;
-import jakarta.inject.Singleton;
-import jakarta.ws.rs.NotFoundException;
-import jakarta.ws.rs.core.HttpHeaders;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import jakarta.ws.rs.core.UriInfo;
 
-@Singleton
+@Component
 public class PlatformCatalogContentProvider implements ArtifactContentProvider {
 
-    @Inject
-    MavenConfig mavenConfig;
+    private final MavenConfig mavenConfig;
+
+    private final PlatformReleaseRepository platformReleaseRepository;
+
+    public PlatformCatalogContentProvider(MavenConfig mavenConfig, PlatformReleaseRepository platformReleaseRepository) {
+        this.mavenConfig = mavenConfig;
+        this.platformReleaseRepository = platformReleaseRepository;
+    }
 
     /**
      * @return true only if
@@ -37,35 +42,34 @@ public class PlatformCatalogContentProvider implements ArtifactContentProvider {
      *         </ul>
      */
     @Override
-    public boolean supports(ArtifactCoords artifact, UriInfo uriInfo) {
+    public boolean supports(ArtifactCoords artifact, MavenRequest request) {
         return mavenConfig.getExtensionCatalogIncluded().orElse(Boolean.FALSE) &&
                 (Constants.DEFAULT_REGISTRY_ARTIFACT_VERSION.equals(artifact.getVersion())
                         || Objects.equals(artifact.getClassifier(), artifact.getVersion()))
-                && PlatformRelease.artifactCoordinatesExist(artifact);
+                && platformReleaseRepository.artifactCoordinatesExist(artifact);
     }
 
     @Override
-    public Response provide(ArtifactCoords artifact, UriInfo uriInfo) throws Exception {
-        String result = findExtensionCatalog(artifact, uriInfo);
-        final String checksumSuffix = ArtifactParser.getChecksumSuffix(uriInfo.getPathSegments(), artifact);
-        String contentType = MediaType.APPLICATION_JSON;
+    public ResponseEntity<String> provide(ArtifactCoords artifact, MavenRequest request) throws Exception {
+        String result = findExtensionCatalog(artifact);
+        final String checksumSuffix = ArtifactParser.getChecksumSuffix(request.pathSegments(), artifact);
+        String contentType = MediaType.APPLICATION_JSON_VALUE;
         if (ArtifactParser.SUFFIX_MD5.equals(checksumSuffix)) {
             result = HashUtil.md5(result);
-            contentType = MediaType.TEXT_PLAIN;
+            contentType = MediaType.TEXT_PLAIN_VALUE;
         } else if (ArtifactParser.SUFFIX_SHA1.equals(checksumSuffix)) {
             result = HashUtil.sha1(result);
-            contentType = MediaType.TEXT_PLAIN;
+            contentType = MediaType.TEXT_PLAIN_VALUE;
         }
-        return Response.ok(result)
+        return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_TYPE, contentType)
-                .build();
+                .body(result);
     }
 
-    private String findExtensionCatalog(ArtifactCoords artifact, UriInfo uriInfo) throws IOException {
-        PlatformRelease platformRelease = PlatformRelease.findByArtifactCoordinates(artifact)
+    private String findExtensionCatalog(ArtifactCoords artifact) throws IOException {
+        PlatformRelease platformRelease = platformReleaseRepository.findByArtifactCoordinates(artifact)
                 .orElseThrow(() -> new NotFoundException("Platform release requested not found"));
         Platform platform = platformRelease.platformStream.platform;
-        List<Category> categories = Category.listAll();
         //TODO: This information is not stored in the DB
         String id = ArtifactCoords.of(platform.groupId, platform.artifactId, platformRelease.version, "json",
                 platformRelease.version).toString();

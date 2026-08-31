@@ -6,6 +6,8 @@ import static org.hamcrest.CoreMatchers.hasItem;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.CoreMatchers.notNullValue;
+import static org.hamcrest.Matchers.everyItem;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -18,6 +20,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayNameGeneration;
 import org.junit.jupiter.api.DisplayNameGenerator;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import io.quarkus.maven.dependency.ArtifactCoords;
 import io.quarkus.registry.app.BaseTest;
@@ -27,104 +30,126 @@ import io.quarkus.registry.app.model.Platform;
 import io.quarkus.registry.app.model.PlatformExtension;
 import io.quarkus.registry.app.model.PlatformRelease;
 import io.quarkus.registry.app.model.PlatformStream;
+import io.quarkus.registry.app.repository.ExtensionReleaseRepository;
+import io.quarkus.registry.app.repository.ExtensionRepository;
+import io.quarkus.registry.app.repository.PlatformExtensionRepository;
+import io.quarkus.registry.app.repository.PlatformReleaseRepository;
+import io.quarkus.registry.app.repository.PlatformRepository;
+import io.quarkus.registry.app.repository.PlatformStreamRepository;
 import io.quarkus.registry.catalog.CatalogMapperHelper;
 import io.quarkus.registry.catalog.ExtensionCatalog;
 import io.quarkus.registry.catalog.ExtensionCatalogImpl;
-import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
-import jakarta.transaction.Transactional;
 
-@QuarkusTest
 @DisplayNameGeneration(DisplayNameGenerator.ReplaceUnderscores.class)
 class AdminApiTest extends BaseTest {
 
+    @Autowired
+    ExtensionRepository extensionRepository;
+
+    @Autowired
+    ExtensionReleaseRepository extensionReleaseRepository;
+
+    @Autowired
+    PlatformRepository platformRepository;
+
+    @Autowired
+    PlatformStreamRepository platformStreamRepository;
+
+    @Autowired
+    PlatformReleaseRepository platformReleaseRepository;
+
+    @Autowired
+    PlatformExtensionRepository platformExtensionRepository;
+
     @BeforeEach
-    @Transactional
     void setUp() {
-        {
-            Extension extension = new Extension();
-            extension.name = "Foo";
-            extension.description = "A Foo Extension";
-            extension.groupId = "foo.bar";
-            extension.artifactId = "foo-extension";
-            extension.persistAndFlush();
+        inTransaction(() -> {
+            {
+                Extension extension = new Extension();
+                extension.name = "Foo";
+                extension.description = "A Foo Extension";
+                extension.groupId = "foo.bar";
+                extension.artifactId = "foo-extension";
+                extensionRepository.saveAndFlush(extension);
 
-            ExtensionRelease extensionRelease = new ExtensionRelease();
-            extensionRelease.extension = extension;
-            extensionRelease.version = "1.0.0";
-            extensionRelease.quarkusCoreVersion = "2.0.0.Final";
-            extensionRelease.persistAndFlush();
-        }
-        {
-            Extension extensionToBeDeleted = new Extension();
-            extensionToBeDeleted.name = "ToDelete";
-            extensionToBeDeleted.description = "A Foo Extension to be deleted";
-            extensionToBeDeleted.groupId = "delete";
-            extensionToBeDeleted.artifactId = "me";
-            extensionToBeDeleted.persistAndFlush();
+                ExtensionRelease extensionRelease = new ExtensionRelease();
+                extensionRelease.extension = extension;
+                extensionRelease.version = "1.0.0";
+                extensionRelease.quarkusCoreVersion = "2.0.0.Final";
+                extensionReleaseRepository.saveAndFlush(extensionRelease);
+            }
+            {
+                Extension extensionToBeDeleted = new Extension();
+                extensionToBeDeleted.name = "ToDelete";
+                extensionToBeDeleted.description = "A Foo Extension to be deleted";
+                extensionToBeDeleted.groupId = "delete";
+                extensionToBeDeleted.artifactId = "me";
+                extensionRepository.saveAndFlush(extensionToBeDeleted);
 
-            ExtensionRelease extensionReleaseToBeDeleted = new ExtensionRelease();
-            extensionReleaseToBeDeleted.extension = extensionToBeDeleted;
-            extensionReleaseToBeDeleted.version = "1.0.0";
-            extensionReleaseToBeDeleted.quarkusCoreVersion = "2.0.0.Final";
-            extensionReleaseToBeDeleted.persistAndFlush();
+                ExtensionRelease extensionReleaseToBeDeleted = new ExtensionRelease();
+                extensionReleaseToBeDeleted.extension = extensionToBeDeleted;
+                extensionReleaseToBeDeleted.version = "1.0.0";
+                extensionReleaseToBeDeleted.quarkusCoreVersion = "2.0.0.Final";
+                extensionReleaseRepository.saveAndFlush(extensionReleaseToBeDeleted);
 
-            ExtensionRelease extensionReleaseToBeDeleted2 = new ExtensionRelease();
-            extensionReleaseToBeDeleted2.extension = extensionToBeDeleted;
-            extensionReleaseToBeDeleted2.version = "1.1.0";
-            extensionReleaseToBeDeleted2.quarkusCoreVersion = "2.0.0.Final";
-            extensionReleaseToBeDeleted2.persistAndFlush();
-        }
-        {
-            Platform platform = Platform.findByKey("io.quarkus.platform").get();
-            PlatformStream stream10 = new PlatformStream();
-            stream10.platform = platform;
-            stream10.streamKey = "10.0";
-            stream10.persistAndFlush();
+                ExtensionRelease extensionReleaseToBeDeleted2 = new ExtensionRelease();
+                extensionReleaseToBeDeleted2.extension = extensionToBeDeleted;
+                extensionReleaseToBeDeleted2.version = "1.1.0";
+                extensionReleaseToBeDeleted2.quarkusCoreVersion = "2.0.0.Final";
+                extensionReleaseRepository.saveAndFlush(extensionReleaseToBeDeleted2);
+            }
+            {
+                Platform platform = platformRepository.findByPlatformKey("io.quarkus.platform").orElseThrow();
+                PlatformStream stream10 = new PlatformStream();
+                stream10.platform = platform;
+                stream10.streamKey = "10.0";
+                platformStreamRepository.saveAndFlush(stream10);
 
-            PlatformStream stream9 = new PlatformStream();
-            stream9.platform = platform;
-            stream9.streamKey = "9.0";
-            stream9.persistAndFlush();
+                PlatformStream stream9 = new PlatformStream();
+                stream9.platform = platform;
+                stream9.streamKey = "9.0";
+                platformStreamRepository.saveAndFlush(stream9);
 
-            PlatformRelease release9 = new PlatformRelease();
-            release9.platformStream = stream9;
-            release9.version = "9.0.0.Final";
-            release9.quarkusCoreVersion = "9.0.0.Final";
-            release9.bom = "io.quarkus.platform:quarkus-bom::pom:9.0.0.Final";
-            release9.persistAndFlush();
+                PlatformRelease release9 = new PlatformRelease();
+                release9.platformStream = stream9;
+                release9.version = "9.0.0.Final";
+                release9.quarkusCoreVersion = "9.0.0.Final";
+                release9.bom = "io.quarkus.platform:quarkus-bom::pom:9.0.0.Final";
+                platformReleaseRepository.saveAndFlush(release9);
 
-            PlatformRelease release10 = new PlatformRelease();
-            release10.platformStream = stream10;
-            release10.version = "10.0.0.Final";
-            release10.quarkusCoreVersion = "10.0.0.Final";
-            release10.bom = "io.quarkus.platform:quarkus-bom::pom:10.0.0.Final";
-            release10.persistAndFlush();
+                PlatformRelease release10 = new PlatformRelease();
+                release10.platformStream = stream10;
+                release10.version = "10.0.0.Final";
+                release10.quarkusCoreVersion = "10.0.0.Final";
+                release10.bom = "io.quarkus.platform:quarkus-bom::pom:10.0.0.Final";
+                platformReleaseRepository.saveAndFlush(release10);
 
-            Extension extensionToBeDeleted = new Extension();
-            extensionToBeDeleted.name = "ToDeleteFromPlatform";
-            extensionToBeDeleted.description = "A Foo Extension to be deleted";
-            extensionToBeDeleted.groupId = "delete-platform-groupId";
-            extensionToBeDeleted.artifactId = "delete-platform-artifactId";
-            extensionToBeDeleted.persist();
+                Extension extensionToBeDeleted = new Extension();
+                extensionToBeDeleted.name = "ToDeleteFromPlatform";
+                extensionToBeDeleted.description = "A Foo Extension to be deleted";
+                extensionToBeDeleted.groupId = "delete-platform-groupId";
+                extensionToBeDeleted.artifactId = "delete-platform-artifactId";
+                extensionRepository.save(extensionToBeDeleted);
 
-            ExtensionRelease extensionReleaseToBeDeleted = new ExtensionRelease();
-            extensionReleaseToBeDeleted.extension = extensionToBeDeleted;
-            extensionReleaseToBeDeleted.version = "1.0.0";
-            extensionReleaseToBeDeleted.quarkusCoreVersion = "2.0.0.Final";
-            extensionReleaseToBeDeleted.persist();
+                ExtensionRelease extensionReleaseToBeDeleted = new ExtensionRelease();
+                extensionReleaseToBeDeleted.extension = extensionToBeDeleted;
+                extensionReleaseToBeDeleted.version = "1.0.0";
+                extensionReleaseToBeDeleted.quarkusCoreVersion = "2.0.0.Final";
+                extensionReleaseRepository.save(extensionReleaseToBeDeleted);
 
-            PlatformExtension platformExtension = new PlatformExtension();
-            platformExtension.extensionRelease = extensionReleaseToBeDeleted;
-            platformExtension.platformRelease = release10;
-            platformExtension.persist();
+                PlatformExtension platformExtension = new PlatformExtension();
+                platformExtension.extensionRelease = extensionReleaseToBeDeleted;
+                platformExtension.platformRelease = release10;
+                platformExtensionRepository.save(platformExtension);
 
-            ExtensionRelease extensionReleaseToBeDeleted2 = new ExtensionRelease();
-            extensionReleaseToBeDeleted2.extension = extensionToBeDeleted;
-            extensionReleaseToBeDeleted2.version = "1.1.0";
-            extensionReleaseToBeDeleted2.quarkusCoreVersion = "2.0.0.Final";
-            extensionReleaseToBeDeleted2.persistAndFlush();
-        }
+                ExtensionRelease extensionReleaseToBeDeleted2 = new ExtensionRelease();
+                extensionReleaseToBeDeleted2.extension = extensionToBeDeleted;
+                extensionReleaseToBeDeleted2.version = "1.1.0";
+                extensionReleaseToBeDeleted2.quarkusCoreVersion = "2.0.0.Final";
+                extensionReleaseRepository.saveAndFlush(extensionReleaseToBeDeleted2);
+            }
+        });
     }
 
     @Test
@@ -190,7 +215,12 @@ class AdminApiTest extends BaseTest {
                 .log().ifValidationFails()
                 .contentType(ContentType.JSON)
                 .body("violations.message", hasItem("X-Platform header missing"),
-                        "violations.message", hasItem("Body payload is missing"));
+                        "violations.message", hasItem("Body payload is missing"))
+                // The FIELD as well as the message. This path runs through
+                // `RestExceptionHandler.fieldOf`, which reads the constraint's propertyPath;
+                // every assertion in the suite looked only at `violations.message`, so a
+                // mutation that made the handler report no field at all went uncaught.
+                .body("violations.field", everyItem(notNullValue()));
     }
 
     @Test

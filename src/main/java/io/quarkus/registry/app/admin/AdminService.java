@@ -5,7 +5,11 @@ import static io.quarkus.registry.catalog.Extension.MD_BUILT_WITH_QUARKUS_CORE;
 import java.util.List;
 import java.util.Map;
 
-import io.quarkus.logging.Log;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
 import io.quarkus.maven.dependency.ArtifactCoords;
 import io.quarkus.registry.app.events.ExtensionCatalogDeleteEvent;
 import io.quarkus.registry.app.events.ExtensionCatalogImportEvent;
@@ -15,7 +19,6 @@ import io.quarkus.registry.app.events.ExtensionCreateEvent;
 import io.quarkus.registry.app.events.ExtensionDeleteEvent;
 import io.quarkus.registry.app.events.ExtensionReleaseDeleteEvent;
 import io.quarkus.registry.app.model.Category;
-import io.quarkus.registry.app.model.DbState;
 import io.quarkus.registry.app.model.Extension;
 import io.quarkus.registry.app.model.ExtensionRelease;
 import io.quarkus.registry.app.model.ExtensionReleaseCompatibility;
@@ -24,22 +27,71 @@ import io.quarkus.registry.app.model.PlatformExtension;
 import io.quarkus.registry.app.model.PlatformRelease;
 import io.quarkus.registry.app.model.PlatformReleaseCategory;
 import io.quarkus.registry.app.model.PlatformStream;
+import io.quarkus.registry.app.repository.CategoryRepository;
+import io.quarkus.registry.app.repository.DbStateRepository;
+import io.quarkus.registry.app.repository.ExtensionReleaseCompatibilityRepository;
+import io.quarkus.registry.app.repository.ExtensionReleaseRepository;
+import io.quarkus.registry.app.repository.ExtensionRepository;
+import io.quarkus.registry.app.repository.PlatformReleaseCategoryRepository;
+import io.quarkus.registry.app.repository.PlatformReleaseRepository;
+import io.quarkus.registry.app.repository.PlatformRepository;
+import io.quarkus.registry.app.repository.PlatformStreamRepository;
 import io.quarkus.registry.catalog.ExtensionCatalog;
 import io.quarkus.registry.util.PlatformArtifacts;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.transaction.Transactional;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 
 /**
  * Administrative operations on the database
  */
-@ApplicationScoped
+@Service
 public class AdminService {
+
+    private static final Logger LOG = LoggerFactory.getLogger(AdminService.class);
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    private final CategoryRepository categoryRepository;
+
+    private final DbStateRepository dbStateRepository;
+
+    private final ExtensionRepository extensionRepository;
+
+    private final ExtensionReleaseRepository extensionReleaseRepository;
+
+    private final ExtensionReleaseCompatibilityRepository extensionReleaseCompatibilityRepository;
+
+    private final PlatformRepository platformRepository;
+
+    private final PlatformStreamRepository platformStreamRepository;
+
+    private final PlatformReleaseRepository platformReleaseRepository;
+
+    private final PlatformReleaseCategoryRepository platformReleaseCategoryRepository;
+
+    public AdminService(CategoryRepository categoryRepository, DbStateRepository dbStateRepository,
+            ExtensionRepository extensionRepository, ExtensionReleaseRepository extensionReleaseRepository,
+            ExtensionReleaseCompatibilityRepository extensionReleaseCompatibilityRepository,
+            PlatformRepository platformRepository, PlatformStreamRepository platformStreamRepository,
+            PlatformReleaseRepository platformReleaseRepository,
+            PlatformReleaseCategoryRepository platformReleaseCategoryRepository) {
+        this.categoryRepository = categoryRepository;
+        this.dbStateRepository = dbStateRepository;
+        this.extensionRepository = extensionRepository;
+        this.extensionReleaseRepository = extensionReleaseRepository;
+        this.extensionReleaseCompatibilityRepository = extensionReleaseCompatibilityRepository;
+        this.platformRepository = platformRepository;
+        this.platformStreamRepository = platformStreamRepository;
+        this.platformReleaseRepository = platformReleaseRepository;
+        this.platformReleaseCategoryRepository = platformReleaseCategoryRepository;
+    }
 
     @Transactional
     public void onExtensionCatalogImport(ExtensionCatalogImportEvent event) {
         try {
             ExtensionCatalog extensionCatalog = event.extensionCatalog();
-            Platform platform = Platform.findByKey(event.platformKey()).orElseGet(() -> {
+            Platform platform = platformRepository.findByPlatformKey(event.platformKey()).orElseGet(() -> {
                 Platform p = new Platform();
                 p.platformKey = event.platformKey();
                 ArtifactCoords catalogId = ArtifactCoords.fromString(extensionCatalog.getId());
@@ -47,8 +99,7 @@ public class AdminService {
                 p.groupId = catalogId.getGroupId();
                 p.artifactId = catalogId.getArtifactId();
                 p.platformType = event.type();
-                p.persist();
-                return p;
+                return platformRepository.save(p);
             });
             PlatformRelease platformRelease = insertPlatformRelease(platform, extensionCatalog, event.pinned());
             for (io.quarkus.registry.catalog.Extension extension : extensionCatalog.getExtensions()) {
@@ -56,20 +107,21 @@ public class AdminService {
             }
             //Add Categories
             for (io.quarkus.registry.catalog.Category category : extensionCatalog.getCategories()) {
-                Category.findByKey(category.getId()).ifPresent(c -> {
-                    if (PlatformReleaseCategory.findByNaturalKey(platformRelease, c).isEmpty()) {
+                categoryRepository.findByCategoryKey(category.getId()).ifPresent(c -> {
+                    if (platformReleaseCategoryRepository.findByPlatformReleaseAndCategory(platformRelease, c)
+                            .isEmpty()) {
                         PlatformReleaseCategory prc = new PlatformReleaseCategory();
                         prc.platformRelease = platformRelease;
                         prc.category = c;
                         prc.metadata = category.getMetadata();
                         platformRelease.categories.add(prc);
-                        prc.persist();
+                        platformReleaseCategoryRepository.save(prc);
                     }
                 });
             }
-            DbState.updateUpdatedAt();
+            dbStateRepository.updateUpdatedAt();
         } catch (Exception e) {
-            Log.error("Error while inserting platform", e);
+            LOG.error("Error while inserting platform", e);
             throw new IllegalStateException(e);
         }
     }
@@ -81,12 +133,10 @@ public class AdminService {
         String streamKey = (String) platformReleaseMetadata.get("stream");
         String version = (String) platformReleaseMetadata.get("version");
         List<String> memberBoms = (List<String>) platformReleaseMetadata.get("members");
-        PlatformStream platformStream = PlatformStream.findByNaturalKey(platform, streamKey).orElseGet(() -> {
-            PlatformStream stream = new PlatformStream(platform, streamKey);
-            stream.persist();
-            return stream;
-        });
-        PlatformRelease platformRelease = PlatformRelease.findByNaturalKey(platformStream, version)
+        PlatformStream platformStream = platformStreamRepository.findByPlatformAndStreamKey(platform, streamKey)
+                .orElseGet(() -> platformStreamRepository.save(new PlatformStream(platform, streamKey)));
+        PlatformRelease platformRelease = platformReleaseRepository
+                .findByPlatformStreamAndVersion(platformStream, version)
                 .orElseGet(() -> {
                     PlatformRelease newPlatformRelease = new PlatformRelease(platformStream, version, pinned);
                     newPlatformRelease.bom = extensionCatalog.getBom().toString();
@@ -99,8 +149,7 @@ public class AdminService {
                     return newPlatformRelease;
                 });
         platformRelease.pinned = pinned;
-        platformRelease.persistAndFlush();
-        return platformRelease;
+        return platformReleaseRepository.saveAndFlush(platformRelease);
     }
 
     @Transactional
@@ -108,9 +157,9 @@ public class AdminService {
         // Non-platform extension
         try {
             insertExtensionRelease(event.extension(), null);
-            DbState.updateUpdatedAt();
+            dbStateRepository.updateUpdatedAt();
         } catch (Exception e) {
-            Log.error("Error while inserting extension", e);
+            LOG.error("Error while inserting extension", e);
             throw new IllegalStateException(e);
         }
     }
@@ -121,11 +170,11 @@ public class AdminService {
         try {
             Extension extension = event.extension();
             // Reattach extension
-            extension = Extension.getEntityManager().merge(extension);
-            extension.delete();
-            DbState.updateUpdatedAt();
+            extension = entityManager.merge(extension);
+            extensionRepository.delete(extension);
+            dbStateRepository.updateUpdatedAt();
         } catch (Exception e) {
-            Log.error("Error while deleting extension", e);
+            LOG.error("Error while deleting extension", e);
             throw new IllegalStateException(e);
         }
     }
@@ -135,11 +184,11 @@ public class AdminService {
         try {
             PlatformRelease platformRelease = event.platformRelease();
             // Reattach platform release
-            platformRelease = PlatformRelease.getEntityManager().merge(platformRelease);
-            platformRelease.delete();
-            DbState.updateUpdatedAt();
+            platformRelease = entityManager.merge(platformRelease);
+            platformReleaseRepository.delete(platformRelease);
+            dbStateRepository.updateUpdatedAt();
         } catch (Exception e) {
-            Log.error("Error while deleting extension catalog", e);
+            LOG.error("Error while deleting extension catalog", e);
             throw new IllegalStateException(e);
         }
     }
@@ -150,11 +199,11 @@ public class AdminService {
         try {
             ExtensionRelease extensionRelease = event.extensionRelease();
             // Reattach extension
-            extensionRelease = ExtensionRelease.getEntityManager().merge(extensionRelease);
-            extensionRelease.delete();
-            DbState.updateUpdatedAt();
+            extensionRelease = entityManager.merge(extensionRelease);
+            extensionReleaseRepository.delete(extensionRelease);
+            dbStateRepository.updateUpdatedAt();
         } catch (Exception e) {
-            Log.error("Error while deleting extension", e);
+            LOG.error("Error while deleting extension", e);
             throw new IllegalStateException(e);
         }
     }
@@ -165,7 +214,7 @@ public class AdminService {
         final String groupId = coords.getGroupId();
         final String artifactId = coords.getArtifactId();
         final String version = coords.getVersion();
-        final Extension extension = Extension.findByGA(groupId, artifactId)
+        final Extension extension = extensionRepository.findByGA(groupId, artifactId)
                 .orElseGet(() -> {
                     Extension newExtension = new Extension();
                     newExtension.groupId = coords.getGroupId();
@@ -173,16 +222,15 @@ public class AdminService {
                     newExtension.name = ext.getName();
                     newExtension.description = ext.getDescription();
 
-                    newExtension.persist();
-                    return newExtension;
+                    return extensionRepository.save(newExtension);
                 });
 
         // Name and description might have changed
         extension.name = ext.getName();
         extension.description = ext.getDescription();
-        extension.persist();
+        extensionRepository.save(extension);
 
-        return ExtensionRelease.findByGAV(groupId, artifactId, version)
+        return extensionReleaseRepository.findByGAV(groupId, artifactId, version)
                 .orElseGet(() -> {
                     ExtensionRelease newExtensionRelease = new ExtensionRelease();
                     newExtensionRelease.version = version;
@@ -212,31 +260,30 @@ public class AdminService {
                     } else {
                         newExtensionRelease.metadata = ext.getMetadata();
                     }
-                    newExtensionRelease.persist();
-                    return newExtensionRelease;
+                    return extensionReleaseRepository.save(newExtensionRelease);
                 });
     }
 
     @Transactional
     public void onExtensionCompatibilityCreate(ExtensionCompatibilityCreateEvent event) {
-        ExtensionReleaseCompatibility extensionReleaseCompatibility = ExtensionReleaseCompatibility.findByNaturalKey(
-                event.extensionRelease(), event.quarkusCore()).orElseGet(() -> {
+        ExtensionReleaseCompatibility extensionReleaseCompatibility = extensionReleaseCompatibilityRepository
+                .findByExtensionReleaseAndQuarkusCoreVersion(event.extensionRelease(), event.quarkusCore())
+                .orElseGet(() -> {
                     ExtensionReleaseCompatibility newEntity = new ExtensionReleaseCompatibility();
                     newEntity.extensionRelease = event.extensionRelease();
                     newEntity.quarkusCoreVersion = event.quarkusCore();
                     return newEntity;
                 });
         extensionReleaseCompatibility.compatible = event.compatible();
-        extensionReleaseCompatibility.persistAndFlush();
-        DbState.updateUpdatedAt();
+        extensionReleaseCompatibilityRepository.saveAndFlush(extensionReleaseCompatibility);
+        dbStateRepository.updateUpdatedAt();
     }
 
     @Transactional
     public void onExtensionCompatibilityDelete(ExtensionCompatibleDeleteEvent event) {
-        ExtensionReleaseCompatibility.delete(
-                "from ExtensionReleaseCompatible rc where rc.extensionRelease = ?1 and rc.quarkusCore = ?2",
+        extensionReleaseCompatibilityRepository.deleteByExtensionReleaseAndQuarkusCoreVersion(
                 event.extensionRelease(),
                 event.quarkusCore());
-        DbState.updateUpdatedAt();
+        dbStateRepository.updateUpdatedAt();
     }
 }

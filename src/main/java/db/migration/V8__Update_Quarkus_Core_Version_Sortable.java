@@ -8,14 +8,17 @@ import java.util.Map;
 
 import org.flywaydb.core.api.migration.BaseJavaMigration;
 import org.flywaydb.core.api.migration.Context;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import io.quarkus.logging.Log;
 import io.quarkus.registry.app.util.Version;
 
 /**
  * Update the quarkus_core_version_sortable column with the quarkus_core_version data
  */
 public class V8__Update_Quarkus_Core_Version_Sortable extends BaseJavaMigration {
+
+    private static final Logger LOG = LoggerFactory.getLogger(V8__Update_Quarkus_Core_Version_Sortable.class);
 
     @Override
     public void migrate(Context context) throws Exception {
@@ -40,7 +43,7 @@ public class V8__Update_Quarkus_Core_Version_Sortable extends BaseJavaMigration 
                     stmt.setString(1, sortable);
                     stmt.setString(2, original);
                     int rows = stmt.executeUpdate();
-                    Log.debugf("%s rows updated from %s to %s%n", rows, original, sortable);
+                    LOG.debug("{} rows updated from {} to {}", rows, original, sortable);
                 }
             }
         }

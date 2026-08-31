@@ -1,8 +1,8 @@
 
-# Run Quarkus dev locally
+# Run the Spring Boot application locally (dev profile)
 dev:
-   quarkus dev
+   ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
 
-# Run Quarkus dev with a local DB
+# Run the Spring Boot application against a local DB
 local:
-  quarkus dev -Dquarkus.datasource.jdbc.url=jdbc:postgresql://localhost:5432/quarkus -Dquarkus.datasource.username=quarkus -Dquarkus.datasource.password=quarkus
+  ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev -Dspring-boot.run.arguments="--spring.datasource.url=jdbc:postgresql://localhost:5432/quarkus --spring.datasource.username=quarkus --spring.datasource.password=quarkus"

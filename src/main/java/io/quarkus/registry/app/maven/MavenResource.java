@@ -1,53 +1,51 @@
 package io.quarkus.registry.app.maven;
 
+import java.net.URI;
 import java.util.List;
 
-import org.eclipse.microprofile.openapi.annotations.Operation;
-import org.eclipse.microprofile.openapi.annotations.tags.Tag;
-import org.jboss.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import io.quarkus.maven.dependency.ArtifactCoords;
-import io.quarkus.registry.app.model.PlatformRelease;
-import jakarta.inject.Inject;
-import jakarta.ws.rs.GET;
-import jakarta.ws.rs.Path;
-import jakarta.ws.rs.PathParam;
-import jakarta.ws.rs.Produces;
-import jakarta.ws.rs.WebApplicationException;
-import jakarta.ws.rs.core.Context;
-import jakarta.ws.rs.core.PathSegment;
-import jakarta.ws.rs.core.Response;
-import jakarta.ws.rs.core.UriInfo;
+import io.quarkus.registry.app.repository.PlatformReleaseRepository;
+import io.swagger.v3.oas.annotations.Hidden;
+import io.swagger.v3.oas.annotations.tags.Tag;
 
 /**
  * Exposes a Maven resource for our tooling
  */
-@Path("/maven")
+@RestController
+@RequestMapping("/maven")
 @Tag(name = "Client", description = "Client related services")
 public class MavenResource {
 
-    private static final Logger log = Logger.getLogger(MavenResource.class);
+    private static final Logger log = LoggerFactory.getLogger(MavenResource.class);
 
-    @Inject
-    PomContentProvider pomContentProvider;
+    private final MavenConfig mavenConfig;
 
-    @Inject
-    MetadataContentProvider metadataContentProvider;
+    private final PlatformReleaseRepository platformReleaseRepository;
 
-    @Inject
-    RegistryDescriptorContentProvider registryDescriptorContentProvider;
+    private final ArtifactContentProvider[] contentProviders;
 
-    @Inject
-    PlatformsContentProvider platformsContentProvider;
-
-    @Inject
-    NonPlatformExtensionsContentProvider nonPlatformExtensionsContentProvider;
-
-    @Inject
-    PlatformCatalogContentProvider platformCatalogContentProvider;
-
-    private ArtifactContentProvider[] getContentProviders() {
-        return new ArtifactContentProvider[] {
+    public MavenResource(MavenConfig mavenConfig,
+            PlatformReleaseRepository platformReleaseRepository,
+            PomContentProvider pomContentProvider,
+            MetadataContentProvider metadataContentProvider,
+            RegistryDescriptorContentProvider registryDescriptorContentProvider,
+            PlatformsContentProvider platformsContentProvider,
+            NonPlatformExtensionsContentProvider nonPlatformExtensionsContentProvider,
+            PlatformCatalogContentProvider platformCatalogContentProvider) {
+        this.mavenConfig = mavenConfig;
+        this.platformReleaseRepository = platformReleaseRepository;
+        this.contentProviders = new ArtifactContentProvider[] {
                 pomContentProvider,
                 metadataContentProvider,
                 registryDescriptorContentProvider,
@@ -57,12 +55,14 @@ public class MavenResource {
         };
     }
 
-    @GET
-    @Path("/")
-    @Produces("text/html")
-    @Operation(hidden = true)
-    public Response welcomePage(@Context MavenConfig mavenConfig) {
-        return Response.ok(String.format("""
+    private ArtifactContentProvider[] getContentProviders() {
+        return contentProviders;
+    }
+
+    @GetMapping(value = { "", "/" }, produces = MediaType.TEXT_HTML_VALUE)
+    @Hidden
+    public ResponseEntity<String> welcomePage() {
+        return ResponseEntity.ok(String.format("""
                         <!DOCTYPE html>
                         <head>
                             <title>Quarkus Registry Maven Repository</title>
@@ -79,38 +79,61 @@ public class MavenResource {
                         If you use a Nexus Repository Manager and are looking for a way to configure it to use this repository, please refer to the <a href="https://quarkus.io/guides/extension-registry-user#how-to-register-as-a-nexus-repository-proxy">How to register as a Nexus Repository proxy guide</a>.
                         """,mavenConfig.getRegistryUrl(),
                             mavenConfig.getRegistryGroupId().replace(".", "/"),
-                            PlatformRelease.findLatestQuarkusCore()
+                            platformReleaseRepository.findLatestQuarkusCore()
                         )
-                ).build();
+                );
     }
 
-    @GET
-    @Path("{path:.+}")
-    @Operation(hidden = true)
-    public Response handleArtifactRequest(
-            @PathParam("path") List<PathSegment> pathSegments,
-            @Context UriInfo uriInfo) {
+    @GetMapping("/{*path}")
+    @Hidden
+    public ResponseEntity<String> handleArtifactRequest(@PathVariable("path") String path) {
+        List<String> pathSegments = toPathSegments(path);
+        URI baseUri = ServletUriComponentsBuilder.fromCurrentContextPath().build().toUri();
+        MavenRequest request = new MavenRequest(pathSegments, baseUri);
         ArtifactCoords artifactCoords;
         try {
             artifactCoords = ArtifactParser.parseCoords(pathSegments);
         } catch (IllegalArgumentException | StringIndexOutOfBoundsException e) {
-            log.debug("Error while parsing coords from " + uriInfo.getPath(), e);
-            return Response.status(Response.Status.NOT_FOUND).build();
+            log.debug("Error while parsing coords from {}", request.path(), e);
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         }
         for (ArtifactContentProvider contentProvider : getContentProviders()) {
-            if (contentProvider.supports(artifactCoords, uriInfo)) {
+            if (contentProvider.supports(artifactCoords, request)) {
                 try {
-                    return contentProvider.provide(artifactCoords, uriInfo);
-                } catch (IllegalArgumentException | IllegalStateException | WebApplicationException wae) {
-                    // These errors will be handled by the Exception mappers
+                    return contentProvider.provide(artifactCoords, request);
+                } catch (IllegalArgumentException | IllegalStateException wae) {
+                    // These errors will be handled by the Exception handlers
                     throw wae;
+                } catch (RuntimeException re) {
+                    if (isHandledByExceptionHandlers(re)) {
+                        throw re;
+                    }
+                    log.error("Error while providing content", re);
+                    return ResponseEntity.internalServerError().build();
                 } catch (Exception e) {
                     log.error("Error while providing content", e);
-                    return Response.serverError().build();
+                    return ResponseEntity.internalServerError().build();
                 }
             }
         }
-        log.debugf("Not found: %s", uriInfo.getPath());
-        return Response.status(Response.Status.NOT_FOUND).build();
+        log.debug("Not found: {}", request.path());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+    }
+
+    /**
+     * The equivalent of the JAX-RS {@code WebApplicationException} passthrough: our own REST exceptions are translated by
+     * the {@code RestExceptionHandler} and must not be swallowed into a 500 here.
+     */
+    private static boolean isHandledByExceptionHandlers(RuntimeException e) {
+        return e instanceof io.quarkus.registry.app.rest.NotFoundException
+                || e instanceof io.quarkus.registry.app.rest.BadRequestException;
+    }
+
+    private static List<String> toPathSegments(String path) {
+        String normalized = path.startsWith("/") ? path.substring(1) : path;
+        if (normalized.isEmpty()) {
+            return List.of();
+        }
+        return List.of(normalized.split("/"));
     }
 }

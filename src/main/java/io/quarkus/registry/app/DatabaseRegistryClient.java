@@ -2,26 +2,35 @@ package io.quarkus.registry.app;
 
 import java.io.IOException;
 import java.io.StringWriter;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-import org.eclipse.microprofile.openapi.annotations.Operation;
-import org.eclipse.microprofile.openapi.annotations.tags.Tag;
-
-import com.fasterxml.jackson.jakarta.rs.yaml.YAMLMediaTypes;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 import io.quarkus.maven.dependency.ArtifactCoords;
 import io.quarkus.registry.Constants;
+import io.quarkus.registry.app.config.YAMLMediaTypes;
 import io.quarkus.registry.app.maven.MavenConfig;
 import io.quarkus.registry.app.model.Category;
 import io.quarkus.registry.app.model.ExtensionRelease;
-import io.quarkus.registry.app.model.ExtensionReleaseCompatibility;
 import io.quarkus.registry.app.model.Platform;
 import io.quarkus.registry.app.model.PlatformRelease;
 import io.quarkus.registry.app.model.PlatformStream;
+import io.quarkus.registry.app.repository.CategoryRepository;
+import io.quarkus.registry.app.repository.ExtensionReleaseCompatibilityRepository;
+import io.quarkus.registry.app.repository.ExtensionReleaseRepository;
+import io.quarkus.registry.app.repository.PlatformReleaseRepository;
 import io.quarkus.registry.app.util.Version;
 import io.quarkus.registry.catalog.Extension;
 import io.quarkus.registry.catalog.ExtensionCatalog;
@@ -34,61 +43,88 @@ import io.quarkus.registry.config.RegistryConfig;
 import io.quarkus.registry.config.RegistryDescriptorConfig;
 import io.quarkus.registry.config.RegistryMavenConfig;
 import io.quarkus.registry.config.RegistryMavenRepoConfig;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotNull;
-import jakarta.ws.rs.GET;
-import jakarta.ws.rs.Path;
-import jakarta.ws.rs.Produces;
-import jakarta.ws.rs.QueryParam;
-import jakarta.ws.rs.core.Context;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
 
 /**
  * This class will query the database for the requested information
  */
-@ApplicationScoped
-@Path("/client")
+@RestController
+@RequestMapping("/client")
 @Tag(name = "Client", description = "Client related services")
 public class DatabaseRegistryClient {
 
     private static final String IO_QUARKUS_PLATFORM = "io.quarkus.platform";
     private static final String QUARKUS_BOM = "quarkus-bom";
 
-    @Inject
-    MavenConfig mavenConfig;
+    private final MavenConfig mavenConfig;
 
-    @GET
-    @Path("/platforms/all")
-    @Produces(MediaType.APPLICATION_JSON)
+    private final PlatformReleaseRepository platformReleaseRepository;
+
+    private final ExtensionReleaseRepository extensionReleaseRepository;
+
+    private final ExtensionReleaseCompatibilityRepository extensionReleaseCompatibilityRepository;
+
+    private final CategoryRepository categoryRepository;
+
+    public DatabaseRegistryClient(MavenConfig mavenConfig,
+            PlatformReleaseRepository platformReleaseRepository,
+            ExtensionReleaseRepository extensionReleaseRepository,
+            ExtensionReleaseCompatibilityRepository extensionReleaseCompatibilityRepository,
+            CategoryRepository categoryRepository) {
+        this.mavenConfig = mavenConfig;
+        this.platformReleaseRepository = platformReleaseRepository;
+        this.extensionReleaseRepository = extensionReleaseRepository;
+        this.extensionReleaseCompatibilityRepository = extensionReleaseCompatibilityRepository;
+        this.categoryRepository = categoryRepository;
+    }
+
+    @GetMapping(value = "/platforms/all", produces = MediaType.APPLICATION_JSON_VALUE)
     @Operation(summary = "List all platform releases from the database")
     public PlatformCatalog resolveAllPlatforms() {
-        List<PlatformRelease> platformReleases = PlatformRelease.findAllCorePlatforms();
+        List<PlatformRelease> platformReleases = platformReleaseRepository.findAllCorePlatforms();
         return toPlatformCatalog(platformReleases, true);
     }
 
-    @GET
-    @Path("/platforms")
-    @Produces(MediaType.APPLICATION_JSON)
+    @GetMapping(value = "/platforms", produces = MediaType.APPLICATION_JSON_VALUE)
     @Operation(summary = "List the latest stable + newer unstable + pinned platform releases")
-    public PlatformCatalog resolveCurrentPlatformsCatalog(@QueryParam("v") String version) {
+    public ResponseEntity<PlatformCatalog> currentPlatformsCatalog(
+            @RequestParam(name = "v", required = false) String version) {
+        PlatformCatalog catalog = resolveCurrentPlatformsCatalog(version);
+        if (catalog == null) {
+            // `Content-Type` is set even though the body is empty. The original returned `null`
+            // from a method annotated `@Produces(APPLICATION_JSON)`, and RESTEasy answers that with
+            // 204 while still declaring the type it would have produced; Spring's bare
+            // `noContent()` declares none, so the header vanished from the response.
+            // ACCEPTED DEVIATION. The original answered 204 with
+            // `Content-Type: application/json;charset=UTF-8`, because RESTEasy states the type its
+            // `@Produces` declared even when the body is empty. Tomcat discards a content type on
+            // a 204 at the protocol layer - `contentType(...)` and a direct
+            // `response.setHeader(...)` were both tried and both stripped - so the header cannot
+            // be sent from a Spring Boot application on this container. The status and the empty
+            // body agree; only the declared type is absent.
+            return ResponseEntity.noContent().build();
+        }
+        return ResponseEntity.ok(catalog);
+    }
+
+    public PlatformCatalog resolveCurrentPlatformsCatalog(String version) {
         if (version != null && !version.isBlank()) {
             Version.validateVersion(version);
         }
-        List<PlatformRelease> platformReleases = PlatformRelease.findLatest(version);
+        List<PlatformRelease> platformReleases = platformReleaseRepository.findLatest(version);
         if (platformReleases.isEmpty()) {
             return null;
         }
         return toPlatformCatalog(platformReleases, false);
     }
 
-    @GET
-    @Path("/non-platform-extensions")
-    @Produces(MediaType.APPLICATION_JSON)
+    @GetMapping(value = "/non-platform-extensions", produces = MediaType.APPLICATION_JSON_VALUE)
     @Operation(summary = "List all latest non-platform extensions compatible with a given Quarkus version")
     public ExtensionCatalog resolveNonPlatformExtensionsCatalog(
-            @NotNull(message = "The Quarkus version (v) is missing") @QueryParam("v") String quarkusVersion) {
+            @NotNull(message = "The Quarkus version (v) is missing") @RequestParam(name = "v", required = false) String quarkusVersion) {
         Version.validateVersion(quarkusVersion);
         String id = mavenConfig.getNonPlatformExtensionCoords(quarkusVersion);
 
@@ -96,8 +132,9 @@ public class DatabaseRegistryClient {
         catalog.setId(id);
         catalog.setBom(ArtifactCoords.pom(IO_QUARKUS_PLATFORM, QUARKUS_BOM, quarkusVersion));
         catalog.setQuarkusCoreVersion(quarkusVersion);
-        List<ExtensionRelease> nonPlatformExtensions = ExtensionRelease.findNonPlatformExtensions(quarkusVersion);
-        Map<Long, Boolean> compatibleMap = ExtensionReleaseCompatibility.findCompatibleMap(quarkusVersion);
+        List<ExtensionRelease> nonPlatformExtensions = extensionReleaseRepository
+                .findNonPlatformExtensions(quarkusVersion);
+        Map<Long, Boolean> compatibleMap = extensionReleaseCompatibilityRepository.findCompatibleMap(quarkusVersion);
         for (ExtensionRelease extensionRelease : nonPlatformExtensions) {
             Extension.Mutable extension = toClientExtension(extensionRelease, catalog);
             // Add compatibility info
@@ -123,32 +160,28 @@ public class DatabaseRegistryClient {
             catalog.addExtension(extension.build());
         }
         // Add all categories
-        List<Category> categories = Category.listAll();
+        List<Category> categories = categoryRepository.findAll();
         categories.stream().map(this::toClientCategory).forEach(catalog::addCategory);
         return catalog.build();
     }
 
-    @GET
-    @Path("/extensions/all")
-    @Produces(MediaType.APPLICATION_JSON)
+    @GetMapping(value = "/extensions/all", produces = MediaType.APPLICATION_JSON_VALUE)
     @Operation(summary = "List all extensions. When an extension has multiple releases, only the most recent will be listed.")
     public ExtensionCatalog resolveAllExtensionsCatalog() {
         final ExtensionCatalog.Mutable catalog = ExtensionCatalog.builder();
-        List<ExtensionRelease> allExtensionReleases = ExtensionRelease.findLatestExtensions();
+        List<ExtensionRelease> allExtensionReleases = extensionReleaseRepository.findLatestExtensions();
 
         allExtensionReleases.stream().map(this::toClientExtension).forEach(catalog::addExtension);
 
         // Add all categories
-        List<Category> categories = Category.listAll();
+        List<Category> categories = categoryRepository.findAll();
         categories.stream().map(this::toClientCategory).forEach(catalog::addCategory);
         return catalog.build();
     }
 
-    @GET
-    @Path("/config.yaml")
-    @Produces(YAMLMediaTypes.APPLICATION_JACKSON_YAML)
+    @GetMapping(value = "/config.yaml", produces = YAMLMediaTypes.APPLICATION_JACKSON_YAML)
     @Operation(summary = "Example Quarkus Registry Client configuration file")
-    public Response clientConfigYaml() throws IOException {
+    public ResponseEntity<String> clientConfigYaml() throws IOException {
         ArtifactCoords coords = ArtifactCoords
                 .of(mavenConfig.getRegistryGroupId(),
                         Constants.DEFAULT_REGISTRY_DESCRIPTOR_ARTIFACT_ID,
@@ -169,21 +202,42 @@ public class DatabaseRegistryClient {
         RegistriesConfig config = RegistriesConfig.builder().setRegistry(registry).build();
         StringWriter writer = new StringWriter();
         RegistriesConfigMapperHelper.toYaml(config, writer);
-        return Response.ok(writer.toString()).build();
+        return ResponseEntity.ok()
+                .contentType(YAMLMediaTypes.APPLICATION_JACKSON_YAML_TYPE)
+                .body(writer.toString());
     }
 
-    @GET
-    @Path("/dump-request")
-    @Produces(MediaType.TEXT_PLAIN)
+    @GetMapping(value = "/dump-request", produces = MediaType.TEXT_PLAIN_VALUE)
     @Operation(hidden = true)
-    public Response dump(@Context jakarta.ws.rs.core.HttpHeaders headers) {
+    public ResponseEntity<String> dump(HttpServletRequest request) {
         // Dump Request Headers
+        //
+        // The names are canonicalised and sorted because this endpoint's whole output IS its
+        // header names. JAX-RS handed them over through a case-insensitive, sorted
+        // MultivaluedMap, so the original printed `Accept`, `Host`, `User-Agent` in that order;
+        // Tomcat hands them over lower-cased and in wire order, which printed `host`,
+        // `user-agent`, `accept`. Same request, different body.
         StringBuilder sb = new StringBuilder();
         sb.append("Request Headers:\n");
-        for (String name : headers.getRequestHeaders().keySet()) {
-            sb.append(name).append(": ").append(headers.getRequestHeader(name)).append("\n");
+        List<String> names = new ArrayList<>(Collections.list(request.getHeaderNames()));
+        names.sort(String.CASE_INSENSITIVE_ORDER);
+        for (String name : names) {
+            sb.append(canonicalHeaderName(name)).append(": ")
+                    .append(Collections.list(request.getHeaders(name))).append("\n");
         }
-        return Response.ok(sb.toString()).build();
+        return ResponseEntity.ok(sb.toString());
+    }
+
+    /** {@code accept-encoding} to {@code Accept-Encoding}, the spelling JAX-RS preserved. */
+    private static String canonicalHeaderName(String name) {
+        StringBuilder out = new StringBuilder(name.length());
+        boolean startOfWord = true;
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            out.append(startOfWord ? Character.toUpperCase(c) : Character.toLowerCase(c));
+            startOfWord = c == '-';
+        }
+        return out.toString();
     }
 
     private PlatformCatalog toPlatformCatalog(List<PlatformRelease> platformReleases, boolean all) {

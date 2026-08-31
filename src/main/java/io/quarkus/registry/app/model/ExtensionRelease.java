@@ -4,10 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 
-import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
-import org.hibernate.Session;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.NaturalId;
 import org.hibernate.type.SqlTypes;
@@ -152,40 +149,5 @@ public class ExtensionRelease extends BaseEntity {
     @Override
     public int hashCode() {
         return Objects.hash(extension, version);
-    }
-
-    public static Optional<ExtensionRelease> findByGAV(String groupId, String artifactId, String version) {
-        Optional<Extension> extension = Extension.findByGA(groupId, artifactId);
-        if (!extension.isPresent()) {
-            return Optional.empty();
-        }
-        Session session = getEntityManager().unwrap(Session.class);
-        return session.byNaturalId(ExtensionRelease.class)
-                .using("extension", extension.get())
-                .using("version", version)
-                .loadOptional();
-    }
-
-    @SuppressWarnings("unchecked")
-    public static List<ExtensionRelease> findNonPlatformExtensions(String quarkusCore) {
-        DefaultArtifactVersion artifactVersion = new DefaultArtifactVersion(quarkusCore);
-        String lowerBound = artifactVersion.getMajorVersion() + ".0.0.A";
-        String upperBound = (artifactVersion.getMajorVersion() + 1) + ".0.0.A";
-        List<Object[]> results = getEntityManager().createNamedQuery("ExtensionRelease.findNonPlatformExtensions")
-                .setParameter("lowerBound", Version.toSortable(lowerBound))
-                .setParameter("upperBound", Version.toSortable(upperBound))
-                .setParameter("quarkusCore", quarkusCore)
-                .setParameter("quarkusCoreSortable", Version.toSortable(quarkusCore))
-                .getResultList();
-
-        return results.stream().map(r -> (ExtensionRelease) r[0]).toList();
-    }
-
-    @SuppressWarnings("unchecked")
-    public static List<ExtensionRelease> findLatestExtensions() {
-        List<Object[]> results = getEntityManager().createNamedQuery("ExtensionRelease.findLatestExtensions")
-                .getResultList();
-
-        return results.stream().map(r -> (ExtensionRelease) r[0]).toList();
     }
 }

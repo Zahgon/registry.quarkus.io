@@ -14,6 +14,7 @@ import org.assertj.core.api.InstanceOfAssertFactories;
 import org.junit.jupiter.api.DisplayNameGeneration;
 import org.junit.jupiter.api.DisplayNameGenerator;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
 
 import io.quarkus.maven.dependency.ArtifactCoords;
 import io.quarkus.registry.Constants;
@@ -22,11 +23,8 @@ import io.quarkus.registry.catalog.CatalogMapperHelper;
 import io.quarkus.registry.catalog.Category;
 import io.quarkus.registry.catalog.ExtensionCatalog;
 import io.quarkus.registry.catalog.ExtensionCatalogImpl;
-import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
-import jakarta.ws.rs.core.MediaType;
 
-@QuarkusTest
 @DisplayNameGeneration(DisplayNameGenerator.ReplaceUnderscores.class)
 public class ChangeMetadataTest extends BaseTest {
 
@@ -79,7 +77,7 @@ public class ChangeMetadataTest extends BaseTest {
                 .get(url)
                 .then()
                 .statusCode(200)
-                .contentType(MediaType.APPLICATION_JSON)
+                .contentType(MediaType.APPLICATION_JSON_VALUE)
                 .extract().asInputStream();
 
         ExtensionCatalog result = CatalogMapperHelper
@@ -138,7 +136,7 @@ public class ChangeMetadataTest extends BaseTest {
                 .get(url)
                 .then()
                 .statusCode(200)
-                .contentType(MediaType.APPLICATION_JSON)
+                .contentType(MediaType.APPLICATION_JSON_VALUE)
                 .extract().asInputStream();
 
         ExtensionCatalog result = CatalogMapperHelper
@@ -202,7 +200,7 @@ public class ChangeMetadataTest extends BaseTest {
                 .get(url)
                 .then()
                 .statusCode(200)
-                .contentType(MediaType.APPLICATION_JSON)
+                .contentType(MediaType.APPLICATION_JSON_VALUE)
                 .extract().asInputStream();
 
         ExtensionCatalog result = CatalogMapperHelper

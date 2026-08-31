@@ -22,23 +22,10 @@ import jakarta.persistence.NamedQuery;
 })
 public class DbState extends BaseEntity {
 
-    static final String UPDATE_SQL = "UPDATE db_state set updated_at = CURRENT_TIMESTAMP where id =1";
+    public static final String UPDATE_SQL = "UPDATE db_state set updated_at = CURRENT_TIMESTAMP where id =1";
 
     @ColumnDefault(value = "CURRENT_TIMESTAMP")
     public Instant updatedAt;
-
-    /**
-     * There will be only one row in this table
-     */
-    public static Instant findUpdatedAt() {
-        return getEntityManager().createNamedQuery("DbState.findUpdatedAt", Instant.class).getSingleResult();
-    }
-
-    public static void updateUpdatedAt() {
-        getEntityManager()
-                .createNamedQuery("DbState.updateUpdateAt")
-                .executeUpdate();
-    }
 
     /**
      * Used in Flyway migration scripts

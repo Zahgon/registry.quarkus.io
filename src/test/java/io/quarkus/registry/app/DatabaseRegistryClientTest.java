@@ -19,9 +19,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayNameGeneration;
 import org.junit.jupiter.api.DisplayNameGenerator;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 
-import com.fasterxml.jackson.jakarta.rs.yaml.YAMLMediaTypes;
-
+import io.quarkus.registry.app.config.YAMLMediaTypes;
 import io.quarkus.registry.app.maven.MavenConfig;
 import io.quarkus.registry.app.model.Extension;
 import io.quarkus.registry.app.model.ExtensionRelease;
@@ -30,60 +31,82 @@ import io.quarkus.registry.app.model.Platform;
 import io.quarkus.registry.app.model.PlatformExtension;
 import io.quarkus.registry.app.model.PlatformRelease;
 import io.quarkus.registry.app.model.PlatformStream;
+import io.quarkus.registry.app.repository.ExtensionReleaseCompatibilityRepository;
+import io.quarkus.registry.app.repository.ExtensionReleaseRepository;
+import io.quarkus.registry.app.repository.ExtensionRepository;
+import io.quarkus.registry.app.repository.PlatformExtensionRepository;
+import io.quarkus.registry.app.repository.PlatformReleaseRepository;
+import io.quarkus.registry.app.repository.PlatformRepository;
+import io.quarkus.registry.app.repository.PlatformStreamRepository;
 import io.quarkus.registry.config.RegistriesConfig;
 import io.quarkus.registry.config.RegistriesConfigImpl;
 import io.quarkus.registry.config.RegistriesConfigMapperHelper;
 import io.quarkus.registry.config.RegistryConfig;
-import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import io.restassured.internal.mapping.Jackson2Mapper;
-import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
-import jakarta.ws.rs.core.MediaType;
 
-@QuarkusTest
 @DisplayNameGeneration(DisplayNameGenerator.ReplaceUnderscores.class)
 class DatabaseRegistryClientTest extends BaseTest {
 
-    @Inject
+    @Autowired
     MavenConfig mavenConfig;
 
+    @Autowired
+    PlatformRepository platformRepository;
+
+    @Autowired
+    PlatformStreamRepository platformStreamRepository;
+
+    @Autowired
+    PlatformReleaseRepository platformReleaseRepository;
+
+    @Autowired
+    ExtensionRepository extensionRepository;
+
+    @Autowired
+    ExtensionReleaseRepository extensionReleaseRepository;
+
+    @Autowired
+    ExtensionReleaseCompatibilityRepository extensionReleaseCompatibilityRepository;
+
+    @Autowired
+    PlatformExtensionRepository platformExtensionRepository;
+
     @BeforeEach
-    @Transactional
     void setUp() {
-        {
-            Platform platform = Platform.findByKey("io.quarkus.platform").get();
+        inTransaction(() -> {
+            Platform platform = platformRepository.findByPlatformKey("io.quarkus.platform").orElseThrow();
             PlatformStream stream20 = new PlatformStream();
             stream20.platform = platform;
             stream20.streamKey = "2.0";
-            stream20.persistAndFlush();
+            platformStreamRepository.saveAndFlush(stream20);
 
             PlatformRelease release201 = new PlatformRelease();
             release201.platformStream = stream20;
             release201.version = "2.0.1.Final";
             release201.quarkusCoreVersion = release201.version;
             release201.bom = "io.quarkus.platform:quarkus-bom::pom:2.0.1.Final";
-            release201.persistAndFlush();
+            platformReleaseRepository.saveAndFlush(release201);
 
             PlatformRelease release202 = new PlatformRelease();
             release202.platformStream = stream20;
             release202.version = "2.0.2.Final";
             release202.quarkusCoreVersion = release202.version;
             release202.bom = "io.quarkus.platform:quarkus-bom::pom:2.0.2.Final";
-            release202.persistAndFlush();
+            platformReleaseRepository.saveAndFlush(release202);
 
             PlatformStream stream21 = new PlatformStream();
             stream21.platform = platform;
             stream21.streamKey = "2.1";
             stream21.lts = true;
-            stream21.persistAndFlush();
+            platformStreamRepository.saveAndFlush(stream21);
 
             PlatformRelease release210CR1 = new PlatformRelease();
             release210CR1.platformStream = stream21;
             release210CR1.version = "2.1.0.CR1";
             release210CR1.quarkusCoreVersion = release210CR1.version;
             release210CR1.bom = "io.quarkus.platform:quarkus-bom::pom:2.1.0.CR1";
-            release210CR1.persistAndFlush();
+            platformReleaseRepository.saveAndFlush(release210CR1);
 
             PlatformRelease release210Final = new PlatformRelease();
             release210Final.platformStream = stream21;
@@ -91,45 +114,45 @@ class DatabaseRegistryClientTest extends BaseTest {
             release210Final.quarkusCoreVersion = release210Final.version;
             release210Final.unlisted = true;
             release210Final.bom = "io.quarkus.platform:quarkus-bom::pom:2.1.0.Final";
-            release210Final.persistAndFlush();
+            platformReleaseRepository.saveAndFlush(release210Final);
 
             PlatformStream stream22 = new PlatformStream();
             stream22.platform = platform;
             stream22.streamKey = "2.2";
-            stream22.persistAndFlush();
+            platformStreamRepository.saveAndFlush(stream22);
 
             PlatformRelease release220SNAPSHOT = new PlatformRelease();
             release220SNAPSHOT.platformStream = stream22;
             release220SNAPSHOT.version = "2.2.0-SNAPSHOT";
             release220SNAPSHOT.quarkusCoreVersion = release220SNAPSHOT.version;
             release220SNAPSHOT.bom = "io.quarkus.platform:quarkus-bom::pom:2.2.0-SNAPSHOT";
-            release220SNAPSHOT.persistAndFlush();
+            platformReleaseRepository.saveAndFlush(release220SNAPSHOT);
 
             Extension extension = new Extension();
             extension.name = "Foo";
             extension.description = "A Foo Extension";
             extension.groupId = "foo.bar";
             extension.artifactId = "foo-extension";
-            extension.persist();
+            extensionRepository.save(extension);
             {
                 ExtensionRelease extensionRelease = new ExtensionRelease();
                 extensionRelease.extension = extension;
                 extensionRelease.version = "1.0.0";
                 extensionRelease.quarkusCoreVersion = "2.0.0.Final";
-                extensionRelease.persist();
+                extensionReleaseRepository.save(extensionRelease);
             }
             {
                 ExtensionRelease extensionRelease = new ExtensionRelease();
                 extensionRelease.extension = extension;
                 extensionRelease.version = "1.1.0";
                 extensionRelease.quarkusCoreVersion = "2.1.0.Final";
-                extensionRelease.persist();
+                extensionReleaseRepository.save(extensionRelease);
 
                 ExtensionReleaseCompatibility erc = new ExtensionReleaseCompatibility();
                 erc.extensionRelease = extensionRelease;
                 erc.quarkusCoreVersion = "2.0.0.Final";
                 erc.compatible = true;
-                erc.persist();
+                extensionReleaseCompatibilityRepository.save(erc);
             }
 
             {
@@ -138,7 +161,7 @@ class DatabaseRegistryClientTest extends BaseTest {
                 newExtension.description = "A Bar Extension";
                 newExtension.groupId = "foo.bar";
                 newExtension.artifactId = "bar-extension";
-                newExtension.persist();
+                extensionRepository.save(newExtension);
                 // Add a few releases to exercise the sorting
                 {
                     ExtensionRelease extensionRelease = new ExtensionRelease();
@@ -146,7 +169,7 @@ class DatabaseRegistryClientTest extends BaseTest {
                     extensionRelease.version = "0.2.2";
                     extensionRelease.quarkusCoreVersion = "3.0.0.Final";
                     extensionRelease.metadata = Map.of("someKey", "somevalue");
-                    extensionRelease.persist();
+                    extensionReleaseRepository.save(extensionRelease);
                 }
                 {
                     ExtensionRelease extensionRelease = new ExtensionRelease();
@@ -154,14 +177,14 @@ class DatabaseRegistryClientTest extends BaseTest {
                     extensionRelease.version = "0.4.2";
                     extensionRelease.quarkusCoreVersion = "3.0.0.Final";
                     extensionRelease.metadata = Map.of("aKey", "avalue");
-                    extensionRelease.persist();
+                    extensionReleaseRepository.save(extensionRelease);
                 }
                 {
                     ExtensionRelease extensionRelease = new ExtensionRelease();
                     extensionRelease.extension = newExtension;
                     extensionRelease.version = "0.1.0";
                     extensionRelease.quarkusCoreVersion = "1.0.0.Final";
-                    extensionRelease.persist();
+                    extensionReleaseRepository.save(extensionRelease);
                 }
             }
 
@@ -172,7 +195,7 @@ class DatabaseRegistryClientTest extends BaseTest {
                 newExtension.description = "A Baz Extension";
                 newExtension.groupId = "foo.bar";
                 newExtension.artifactId = "baz-extension";
-                newExtension.persist();
+                extensionRepository.save(newExtension);
                 {
                     ExtensionRelease extensionRelease = new ExtensionRelease();
                     extensionRelease.extension = newExtension;
@@ -185,7 +208,7 @@ class DatabaseRegistryClientTest extends BaseTest {
                         metadata.put("nested", Map.of("key1", "value1"));
                         extensionRelease.metadata = metadata;
                     }
-                    extensionRelease.persist();
+                    extensionReleaseRepository.save(extensionRelease);
 
                     PlatformExtension platformExtension = new PlatformExtension();
                     platformExtension.extensionRelease = extensionRelease;
@@ -197,11 +220,11 @@ class DatabaseRegistryClientTest extends BaseTest {
                         platformExtension.metadata = metadata;
                     }
 
-                    platformExtension.persist();
+                    platformExtensionRepository.save(platformExtension);
                 }
 
             }
-        }
+        });
     }
 
     @Test
@@ -225,7 +248,7 @@ class DatabaseRegistryClientTest extends BaseTest {
     @Test
     void should_return_unacceptable_on_invalid_accept_headers() {
         given()
-                .accept(MediaType.APPLICATION_XML)
+                .accept(MediaType.APPLICATION_XML_VALUE)
                 .get("/client/platforms")
                 .then()
                 .statusCode(HttpURLConnection.HTTP_NOT_ACCEPTABLE);

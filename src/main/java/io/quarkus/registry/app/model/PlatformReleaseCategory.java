@@ -1,9 +1,7 @@
 package io.quarkus.registry.app.model;
 
 import java.util.Map;
-import java.util.Optional;
 
-import org.hibernate.Session;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.NaturalId;
 import org.hibernate.type.SqlTypes;
@@ -26,13 +24,5 @@ public class PlatformReleaseCategory extends BaseEntity {
 
     @JdbcTypeCode(SqlTypes.JSON)
     public Map<String, Object> metadata;
-
-    public static Optional<PlatformReleaseCategory> findByNaturalKey(PlatformRelease platformRelease, Category category) {
-        Session session = getEntityManager().unwrap(Session.class);
-        return session.byNaturalId(PlatformReleaseCategory.class)
-                .using("platformRelease", platformRelease)
-                .using("category", category)
-                .loadOptional();
-    }
 
 }

@@ -2,105 +2,54 @@ package io.quarkus.registry.app.maven;
 
 import java.io.IOException;
 import java.io.StringWriter;
-import java.time.Instant;
-import java.util.Collections;
-import java.util.Date;
-import java.util.List;
 
 import org.apache.maven.artifact.repository.metadata.Metadata;
-import org.apache.maven.artifact.repository.metadata.Snapshot;
-import org.apache.maven.artifact.repository.metadata.SnapshotVersion;
-import org.apache.maven.artifact.repository.metadata.Versioning;
 import org.apache.maven.artifact.repository.metadata.io.xpp3.MetadataXpp3Writer;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Component;
 
-import io.quarkus.cache.CacheResult;
 import io.quarkus.maven.dependency.ArtifactCoords;
-import io.quarkus.registry.app.CacheNames;
-import io.quarkus.registry.app.maven.cache.MavenCacheState;
-import io.quarkus.registry.app.model.PlatformRelease;
-import jakarta.inject.Inject;
-import jakarta.inject.Singleton;
-import jakarta.ws.rs.core.HttpHeaders;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import jakarta.ws.rs.core.UriInfo;
 
-@Singleton
+@Component
 public class MetadataContentProvider implements ArtifactContentProvider {
 
     private static final MetadataXpp3Writer METADATA_WRITER = new MetadataXpp3Writer();
 
-    private static final List<String> EMPTY_CLASSIFIER = Collections.singletonList("");
+    private final MavenConfig mavenConfig;
 
-    @Inject
-    MavenConfig mavenConfig;
+    private final MetadataFactory metadataFactory;
 
-    @Inject
-    MavenCacheState mavenCacheState;
+    public MetadataContentProvider(MavenConfig mavenConfig, MetadataFactory metadataFactory) {
+        this.mavenConfig = mavenConfig;
+        this.metadataFactory = metadataFactory;
+    }
 
     @Override
-    public boolean supports(ArtifactCoords artifact, UriInfo uriInfo) {
+    public boolean supports(ArtifactCoords artifact, MavenRequest request) {
         return mavenConfig.supports(artifact)
                 && artifact.getType() != null &&
                 artifact.getType().startsWith(ArtifactParser.MAVEN_METADATA_XML);
     }
 
     @Override
-    public Response provide(ArtifactCoords artifact, UriInfo uriInfo) throws IOException {
-        Metadata metadata = generateMetadata(artifact);
+    public ResponseEntity<String> provide(ArtifactCoords artifact, MavenRequest request) throws IOException {
+        Metadata metadata = metadataFactory.generateMetadata(artifact);
         String result = writeMetadata(metadata);
-        final String checksumSuffix = ArtifactParser.getChecksumSuffix(uriInfo.getPathSegments(), artifact);
-        String contentType = MediaType.APPLICATION_XML;
+        final String checksumSuffix = ArtifactParser.getChecksumSuffix(request.pathSegments(), artifact);
+        String contentType = MediaType.APPLICATION_XML_VALUE;
         if (ArtifactParser.SUFFIX_MD5.equals(checksumSuffix)) {
             result = HashUtil.md5(result);
-            contentType = MediaType.TEXT_PLAIN;
+            contentType = MediaType.TEXT_PLAIN_VALUE;
         } else if (ArtifactParser.SUFFIX_SHA1.equals(checksumSuffix)) {
             result = HashUtil.sha1(result);
-            contentType = MediaType.TEXT_PLAIN;
+            contentType = MediaType.TEXT_PLAIN_VALUE;
         }
 
-        return Response.ok(result)
+        return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_TYPE, contentType)
-                .build();
-    }
-
-    @CacheResult(cacheName = CacheNames.METADATA)
-    Metadata generateMetadata(ArtifactCoords artifact) {
-        Metadata newMetadata = new Metadata();
-        newMetadata.setGroupId(artifact.getGroupId());
-        newMetadata.setArtifactId(artifact.getArtifactId());
-        newMetadata.setVersion(artifact.getVersion());
-
-        Versioning versioning = new Versioning();
-        newMetadata.setVersioning(versioning);
-
-        Instant lastUpdated = mavenCacheState.getLastUpdate();
-        versioning.setLastUpdatedTimestamp(Date.from(lastUpdated));
-
-        Snapshot snapshot = new Snapshot();
-        versioning.setSnapshot(snapshot);
-        snapshot.setTimestamp(versioning.getLastUpdated().substring(0, 8) + "." + versioning.getLastUpdated().substring(8));
-        snapshot.setBuildNumber(1);
-
-        final String baseVersion = artifact.getVersion().substring(0, artifact.getVersion().length() - "SNAPSHOT".length());
-        addSnapshotVersion(versioning, snapshot, baseVersion, "pom", EMPTY_CLASSIFIER);
-        addSnapshotVersion(versioning, snapshot, baseVersion, "json", EMPTY_CLASSIFIER);
-        addSnapshotVersion(versioning, snapshot, baseVersion, "json", PlatformRelease.findQuarkusCores());
-        addSnapshotVersion(versioning, snapshot, baseVersion, "json", List.of("all"));
-        return newMetadata;
-    }
-
-    private static void addSnapshotVersion(Versioning versioning, Snapshot snapshot, final String baseVersion,
-            String extension, List<String> classifiers) {
-        final String version = baseVersion + snapshot.getTimestamp() + "-" + snapshot.getBuildNumber();
-        for (String classifier : classifiers) {
-            final SnapshotVersion sv = new SnapshotVersion();
-            sv.setExtension(extension);
-            sv.setVersion(version);
-            sv.setClassifier(classifier);
-            sv.setUpdated(versioning.getLastUpdated());
-            versioning.addSnapshotVersion(sv);
-        }
+                .body(result);
     }
 
     private String writeMetadata(Metadata metadata) throws IOException {

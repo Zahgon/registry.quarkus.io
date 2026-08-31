@@ -2,9 +2,7 @@ package io.quarkus.registry.app.model;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 
-import org.hibernate.Session;
 import org.hibernate.annotations.NaturalId;
 
 import jakarta.persistence.Column;
@@ -49,14 +47,6 @@ public class Extension extends BaseEntity {
     @Override
     public int hashCode() {
         return Objects.hash(groupId, artifactId);
-    }
-
-    public static Optional<Extension> findByGA(String groupId, String artifactId) {
-        Session session = getEntityManager().unwrap(Session.class);
-        return session.byNaturalId(Extension.class)
-                .using("groupId", groupId)
-                .using("artifactId", artifactId)
-                .loadOptional();
     }
 
 }

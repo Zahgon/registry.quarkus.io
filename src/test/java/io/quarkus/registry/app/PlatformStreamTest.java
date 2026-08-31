@@ -10,54 +10,63 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayNameGeneration;
 import org.junit.jupiter.api.DisplayNameGenerator;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import io.quarkus.registry.app.model.Platform;
 import io.quarkus.registry.app.model.PlatformRelease;
 import io.quarkus.registry.app.model.PlatformStream;
-import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.registry.app.repository.PlatformReleaseRepository;
+import io.quarkus.registry.app.repository.PlatformRepository;
+import io.quarkus.registry.app.repository.PlatformStreamRepository;
 import io.restassured.http.ContentType;
-import jakarta.transaction.Transactional;
 
-@QuarkusTest
 @DisplayNameGeneration(DisplayNameGenerator.ReplaceUnderscores.class)
 public class PlatformStreamTest extends BaseTest {
 
+    @Autowired
+    PlatformRepository platformRepository;
+
+    @Autowired
+    PlatformStreamRepository platformStreamRepository;
+
+    @Autowired
+    PlatformReleaseRepository platformReleaseRepository;
+
     @BeforeEach
-    @Transactional
     void setUp() {
-        {
-            Platform platform = Platform.findByKey("io.quarkus.platform").get();
+        inTransaction(() -> {
+            Platform platform = platformRepository.findByPlatformKey("io.quarkus.platform").orElseThrow();
             PlatformStream stream20 = new PlatformStream();
             stream20.platform = platform;
             stream20.streamKey = "2.0";
             stream20.pinned = true;
-            stream20.persistAndFlush();
+            platformStreamRepository.saveAndFlush(stream20);
 
             PlatformRelease release201 = new PlatformRelease();
             release201.platformStream = stream20;
             release201.version = "2.0.1.Final";
             release201.quarkusCoreVersion = release201.version;
             release201.bom = "io.quarkus.platform:quarkus-bom::pom:2.0.1.Final";
-            release201.persistAndFlush();
+            platformReleaseRepository.saveAndFlush(release201);
 
             PlatformRelease release202 = new PlatformRelease();
             release202.platformStream = stream20;
             release202.version = "2.0.2.Final";
             release202.quarkusCoreVersion = release202.version;
             release202.bom = "io.quarkus.platform:quarkus-bom::pom:2.0.2.Final";
-            release202.persistAndFlush();
+            platformReleaseRepository.saveAndFlush(release202);
 
             PlatformStream stream21 = new PlatformStream();
             stream21.platform = platform;
             stream21.streamKey = "2.1";
-            stream21.persistAndFlush();
+            platformStreamRepository.saveAndFlush(stream21);
 
             PlatformRelease release210CR1 = new PlatformRelease();
             release210CR1.platformStream = stream21;
             release210CR1.version = "2.1.0.CR1";
             release210CR1.quarkusCoreVersion = release210CR1.version;
             release210CR1.bom = "io.quarkus.platform:quarkus-bom::pom:2.1.0.CR1";
-            release210CR1.persistAndFlush();
+            platformReleaseRepository.saveAndFlush(release210CR1);
 
             PlatformRelease release210Final = new PlatformRelease();
             release210Final.platformStream = stream21;
@@ -65,47 +74,47 @@ public class PlatformStreamTest extends BaseTest {
             release210Final.quarkusCoreVersion = release210Final.version;
             release210Final.unlisted = true;
             release210Final.bom = "io.quarkus.platform:quarkus-bom::pom:2.1.0.Final";
-            release210Final.persistAndFlush();
+            platformReleaseRepository.saveAndFlush(release210Final);
 
             PlatformStream stream22 = new PlatformStream();
             stream22.platform = platform;
             stream22.streamKey = "2.2";
             stream22.pinned = true;
-            stream22.persistAndFlush();
+            platformStreamRepository.saveAndFlush(stream22);
 
             PlatformRelease release220Final = new PlatformRelease();
             release220Final.platformStream = stream22;
             release220Final.version = "2.2.0.Final";
             release220Final.quarkusCoreVersion = release220Final.version;
             release220Final.bom = "io.quarkus.platform:quarkus-bom::pom:2.2.0.Final";
-            release220Final.persistAndFlush();
+            platformReleaseRepository.saveAndFlush(release220Final);
 
             PlatformRelease release221Final = new PlatformRelease();
             release221Final.platformStream = stream22;
             release221Final.version = "2.2.1.Final";
             release221Final.quarkusCoreVersion = release221Final.version;
             release221Final.bom = "io.quarkus.platform:quarkus-bom::pom:2.2.1.Final";
-            release221Final.persistAndFlush();
+            platformReleaseRepository.saveAndFlush(release221Final);
 
             PlatformStream stream23 = new PlatformStream();
             stream23.platform = platform;
             stream23.streamKey = "2.3";
-            stream23.persistAndFlush();
+            platformStreamRepository.saveAndFlush(stream23);
 
             PlatformRelease release230Final = new PlatformRelease();
             release230Final.platformStream = stream23;
             release230Final.version = "2.3.0.Final";
             release230Final.quarkusCoreVersion = release230Final.version;
             release230Final.bom = "io.quarkus.platform:quarkus-bom::pom:2.3.0.Final";
-            release230Final.persistAndFlush();
+            platformReleaseRepository.saveAndFlush(release230Final);
 
             PlatformRelease release231Final = new PlatformRelease();
             release231Final.platformStream = stream23;
             release231Final.version = "2.3.1.Final";
             release231Final.quarkusCoreVersion = release231Final.version;
             release231Final.bom = "io.quarkus.platform:quarkus-bom::pom:2.3.1.Final";
-            release231Final.persistAndFlush();
-        }
+            platformReleaseRepository.saveAndFlush(release231Final);
+        });
     }
 
     @Test

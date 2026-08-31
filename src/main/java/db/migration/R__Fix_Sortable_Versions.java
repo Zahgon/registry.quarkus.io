@@ -9,8 +9,9 @@ import java.util.Map;
 
 import org.flywaydb.core.api.migration.BaseJavaMigration;
 import org.flywaydb.core.api.migration.Context;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import io.quarkus.logging.Log;
 import io.quarkus.registry.app.model.DbState;
 import io.quarkus.registry.app.util.Version;
 
@@ -18,6 +19,8 @@ import io.quarkus.registry.app.util.Version;
  * Fixes the version_sortable value column in the extension_release table
  */
 public class R__Fix_Sortable_Versions extends BaseJavaMigration {
+
+    private static final Logger LOG = LoggerFactory.getLogger(R__Fix_Sortable_Versions.class);
 
     /**
      * Increase this number to have this script re-run when the application starts
@@ -71,7 +74,7 @@ public class R__Fix_Sortable_Versions extends BaseJavaMigration {
                     stmt.setString(2, original);
                     int rows = stmt.executeUpdate();
                     rowsUpdated += rows;
-                    Log.debugf("%s rows updated from %s to %s%n", rows, original, sortable);
+                    LOG.debug("{} rows updated from {} to {}", rows, original, sortable);
                 }
             }
             // Update DbState timestamp only if any rows changed

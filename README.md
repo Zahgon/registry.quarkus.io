@@ -14,13 +14,16 @@ docker-compose up
 
 ## Running the application in dev mode
 
-The application will start a PostgreSQL DB
-using [DevServices](https://quarkus.io/guides/datasource#dev-services-configuration-free-databases).
-
-Run the following command to start the application (make sure your Docker daemon is running):
+Start a PostgreSQL DB first (the `database` service of the bundled `docker-compose.yaml` works):
 
 ```shell script
-./mvnw clean compile quarkus:dev -Ddebug
+docker-compose up database
+```
+
+Then run the following command to start the application:
+
+```shell script
+./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
 ## Indexing extensions and platforms
@@ -121,22 +124,6 @@ jbang catalog_publish@quarkusio --working-directory=. --registry-url=https://reg
 `$TOKEN` is a shared secret known to the registry maintainers.
 
 If you need help please [open an issue](https://github.com/quarkusio/registry.quarkus.io/issues).
-
-### SRCFG00011: Could not expand value buildNumber in property quarkus.application.version
-
-If while running the application during quarkus:dev mode and changing the `application.properties` file, you may
-encounter this error once you restart the application (by typing `s`):
-
-```
-One or more configuration errors have prevented the application from starting. The errors are:
-  - SRCFG00011: Could not expand value buildNumber in property quarkus.application.version
-```
-
-The workaround is to create an `.env` file in the root with the following contents:
-
-```properties
-buildNumber=999-SNAPSHOT
-```
 
 ### How to update/bump a deployed version?
 

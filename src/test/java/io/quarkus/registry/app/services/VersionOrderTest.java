@@ -10,69 +10,78 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayNameGeneration;
 import org.junit.jupiter.api.DisplayNameGenerator;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 
 import io.quarkus.registry.app.BaseTest;
 import io.quarkus.registry.app.model.Platform;
 import io.quarkus.registry.app.model.PlatformRelease;
 import io.quarkus.registry.app.model.PlatformStream;
-import io.quarkus.test.junit.QuarkusTest;
-import jakarta.transaction.Transactional;
-import jakarta.ws.rs.core.MediaType;
+import io.quarkus.registry.app.repository.PlatformReleaseRepository;
+import io.quarkus.registry.app.repository.PlatformRepository;
+import io.quarkus.registry.app.repository.PlatformStreamRepository;
 
-@QuarkusTest
 @DisplayNameGeneration(DisplayNameGenerator.ReplaceUnderscores.class)
 public class VersionOrderTest extends BaseTest {
 
+    @Autowired
+    PlatformRepository platformRepository;
+
+    @Autowired
+    PlatformStreamRepository platformStreamRepository;
+
+    @Autowired
+    PlatformReleaseRepository platformReleaseRepository;
+
     @BeforeEach
-    @Transactional
     void setUp() {
-        {
-            Platform platform = Platform.findByKey("io.quarkus.platform").get();
+        inTransaction(() -> {
+            Platform platform = platformRepository.findByPlatformKey("io.quarkus.platform").orElseThrow();
             PlatformStream stream20 = new PlatformStream();
             stream20.platform = platform;
             stream20.streamKey = "2.0";
-            stream20.persistAndFlush();
+            platformStreamRepository.saveAndFlush(stream20);
 
             PlatformRelease release201 = new PlatformRelease();
             release201.platformStream = stream20;
             release201.version = "2.0.1.Final";
             release201.quarkusCoreVersion = "2.0.1.Final";
             release201.bom = "io.quarkus.platform:quarkus-bom::pom:2.0.1.Final";
-            release201.persistAndFlush();
+            platformReleaseRepository.saveAndFlush(release201);
 
             PlatformRelease release202 = new PlatformRelease();
             release202.platformStream = stream20;
             release202.version = "2.0.2.Final";
             release202.quarkusCoreVersion = "2.0.2.Final";
             release202.bom = "io.quarkus.platform:quarkus-bom::pom:2.0.2.Final";
-            release202.persistAndFlush();
+            platformReleaseRepository.saveAndFlush(release202);
 
             PlatformStream stream21 = new PlatformStream();
             stream21.platform = platform;
             stream21.streamKey = "2.1";
-            stream21.persistAndFlush();
+            platformStreamRepository.saveAndFlush(stream21);
 
             PlatformRelease release210CR1 = new PlatformRelease();
             release210CR1.platformStream = stream21;
             release210CR1.version = "2.1.0.CR1";
             release210CR1.quarkusCoreVersion = "2.1.0.CR1";
             release210CR1.bom = "io.quarkus.platform:quarkus-bom::pom:2.1.0.CR1";
-            release210CR1.persistAndFlush();
-        }
-        {
-            Platform platform = Platform.findByKey("com.redhat.quarkus.platform").get();
+            platformReleaseRepository.saveAndFlush(release210CR1);
+        });
+        inTransaction(() -> {
+            Platform platform = platformRepository.findByPlatformKey("com.redhat.quarkus.platform").orElseThrow();
             PlatformStream stream20 = new PlatformStream();
             stream20.platform = platform;
             stream20.streamKey = "2.0";
-            stream20.persistAndFlush();
+            platformStreamRepository.saveAndFlush(stream20);
 
             PlatformRelease release200 = new PlatformRelease();
             release200.platformStream = stream20;
             release200.version = "2.0.0.Final-redhat0001";
             release200.quarkusCoreVersion = release200.version;
             release200.bom = "io.quarkus.platform:quarkus-bom::pom:2.0.0.Final";
-            release200.persistAndFlush();
-        }
+            platformReleaseRepository.saveAndFlush(release200);
+        });
     }
 
     @Test
@@ -81,7 +90,7 @@ public class VersionOrderTest extends BaseTest {
                 .get("/client/platforms")
                 .then()
                 .statusCode(200)
-                .header("Content-Type", containsString(MediaType.APPLICATION_JSON))
+                .header("Content-Type", containsString(MediaType.APPLICATION_JSON_VALUE))
                 .extract().path("platforms.streams.id");
         assertThat(ids).containsExactly(List.of("2.0", "2.1"), List.of("2.0"));
     }
