@@ -8,7 +8,6 @@ import org.springframework.stereotype.Component;
 import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.config.MeterFilter;
-import io.micrometer.core.instrument.config.MeterFilterReply;
 import io.micrometer.core.instrument.distribution.DistributionStatisticConfig;
 
 /**
@@ -17,21 +16,16 @@ import io.micrometer.core.instrument.distribution.DistributionStatisticConfig;
 @Component
 public class HistogramMeterFilter implements MeterFilter {
     private static final Set<String> WRITE_METHODS = Set.of("POST", "PUT", "PATCH", "DELETE");
-    private static final Set<String> IGNORED_URIS = Set.of("/favicon.ico", "/", "/index.html");
     private static final Tag OP_READ = Tag.of("op", "r");
     private static final Tag OP_WRITE = Tag.of("op", "w");
 
     @Override
-    public MeterFilterReply accept(Meter.Id id) {
-        if (isHttpServerRequests(id) && IGNORED_URIS.contains(id.getTag("uri"))) {
-            return MeterFilterReply.DENY;
-        }
-        return MeterFilterReply.NEUTRAL;
-    }
-
-    @Override
     public Meter.Id map(Meter.Id id) {
         if (isHttpServerRequests(id)) {
+            // Quarkus recorded no error/exception tags; the existing dashboards select by the other labels
+            id = id.replaceTags(id.getTags().stream()
+                    .filter(tag -> !tag.getKey().equals("error") && !tag.getKey().equals("exception"))
+                    .toList());
             String uri = id.getTag("uri");
             String method = id.getTag("method");
             if (uri == null || method == null) {

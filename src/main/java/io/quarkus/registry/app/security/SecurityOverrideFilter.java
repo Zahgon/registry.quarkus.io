@@ -3,7 +3,6 @@ package io.quarkus.registry.app.security;
 import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -26,17 +25,17 @@ public class SecurityOverrideFilter extends OncePerRequestFilter {
 
     public static final String ADMIN_ROLE = "admin";
 
-    private final Optional<String> appToken;
+    private final String appToken;
 
     public SecurityOverrideFilter(String appToken) {
-        this.appToken = Optional.ofNullable(appToken);
+        this.appToken = Objects.requireNonNull(appToken, "appToken");
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
         String token = request.getHeader("TOKEN");
-        if (appToken.isEmpty() || Objects.equals(appToken.orElse(null), token)) {
+        if (appToken.equals(token)) {
             var authentication = UsernamePasswordAuthenticationToken.authenticated("Admin", null,
                     List.of(new SimpleGrantedAuthority("ROLE_" + ADMIN_ROLE)));
             SecurityContextHolder.getContext().setAuthentication(authentication);

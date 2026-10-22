@@ -39,6 +39,8 @@ public class LenientContentNegotiationStrategy implements ContentNegotiationStra
         return mediaTypes;
     }
 
+    private static final MediaType UNMATCHABLE = new MediaType("x-not-acceptable", "x-not-acceptable");
+
     private static MediaType parseLeniently(String token) {
         try {
             return MediaType.parseMediaType(token);
@@ -51,7 +53,13 @@ public class LenientContentNegotiationStrategy implements ContentNegotiationStra
                     sanitized = candidate;
                 }
             }
-            return isParsable(sanitized) ? MediaType.parseMediaType(sanitized) : MediaType.ALL;
+            // A token that is not a media type at all (no type/subtype) matches nothing, so the request
+            // answers 406, as RESTEasy answered it; only its unusable parameters are forgiven.
+            if (isParsable(sanitized)) {
+                return MediaType.parseMediaType(sanitized);
+            }
+            // "*/json" is not a media type to Spring; RESTEasy read a wildcard type as any type
+            return sanitized.startsWith("*/") ? MediaType.ALL : UNMATCHABLE;
         }
     }
 

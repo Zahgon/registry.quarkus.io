@@ -1,16 +1,20 @@
 package io.quarkus.registry.app.maven.cache;
 
-import org.springframework.boot.actuate.health.Health;
-import org.springframework.boot.actuate.health.HealthIndicator;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 import org.springframework.stereotype.Component;
 
 import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.stats.CacheStats;
+
+import io.quarkus.registry.app.health.HealthCheck;
 
 /**
- * Check the cache
+ * Check the cache. A liveness check, as the MicroProfile {@code @Liveness} annotation made it.
  */
-@Component("Maven cache health")
-public class MavenCacheHealthCheck implements HealthIndicator {
+@Component
+public class MavenCacheHealthCheck implements HealthCheck {
 
     private final MavenCache mavenCache;
 
@@ -19,19 +23,29 @@ public class MavenCacheHealthCheck implements HealthIndicator {
     }
 
     @Override
-    public Health health() {
-        Cache<?, ?> cache = mavenCache.getCache();
-        return Health.up()
-                .withDetail("last invalidate all time", mavenCache.getLastInvalidateTime().toString())
-                .withDetail("estimated size", cache.estimatedSize())
-                .withDetail("request count", cache.stats().requestCount())
-                .withDetail("hit count", cache.stats().hitCount())
-                .withDetail("miss count", cache.stats().missCount())
-                .withDetail("load count", cache.stats().loadCount())
-                .withDetail("eviction count", String.valueOf(cache.stats().evictionCount()))
-                .withDetail("hit rate", String.valueOf(cache.stats().hitRate()))
-                .withDetail("miss rate", String.valueOf(cache.stats().missRate()))
-                .build();
+    public String name() {
+        return "Maven cache health";
     }
 
+    @Override
+    public Kind kind() {
+        return Kind.LIVENESS;
+    }
+
+    @Override
+    public Result call() {
+        Cache<?, ?> cache = mavenCache.getCache();
+        CacheStats stats = cache.stats();
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("last invalidate all time", mavenCache.getLastInvalidateTime().toString());
+        data.put("estimated size", cache.estimatedSize());
+        data.put("request count", stats.requestCount());
+        data.put("hit count", stats.hitCount());
+        data.put("miss count", stats.missCount());
+        data.put("load count", stats.loadCount());
+        data.put("eviction count", String.valueOf(stats.evictionCount()));
+        data.put("hit rate", String.valueOf(stats.hitRate()));
+        data.put("miss rate", String.valueOf(stats.missRate()));
+        return Result.up(data);
+    }
 }

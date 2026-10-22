@@ -105,13 +105,15 @@ public class AdminApi {
 
     private final PlatformExtensionRepository platformExtensionRepository;
 
+    private final AdminWriteLock adminWriteLock;
+
     public AdminApi(AdminService adminService, MavenCache cache, ObjectMapper objectMapper,
             CategoryRepository categoryRepository, DbStateRepository dbStateRepository,
             ExtensionRepository extensionRepository, ExtensionReleaseRepository extensionReleaseRepository,
             PlatformRepository platformRepository, PlatformStreamRepository platformStreamRepository,
             PlatformReleaseRepository platformReleaseRepository,
             PlatformReleaseCategoryRepository platformReleaseCategoryRepository,
-            PlatformExtensionRepository platformExtensionRepository) {
+            PlatformExtensionRepository platformExtensionRepository, AdminWriteLock adminWriteLock) {
         this.adminService = adminService;
         this.cache = cache;
         this.objectMapper = objectMapper;
@@ -124,17 +126,20 @@ public class AdminApi {
         this.platformReleaseRepository = platformReleaseRepository;
         this.platformReleaseCategoryRepository = platformReleaseCategoryRepository;
         this.platformExtensionRepository = platformExtensionRepository;
+        this.adminWriteLock = adminWriteLock;
     }
 
     @PostMapping(value = "/v1/extension/catalog", produces = MediaType.APPLICATION_JSON_VALUE, consumes = {
             MediaType.APPLICATION_JSON_VALUE, YAMLMediaTypes.APPLICATION_JACKSON_YAML})
     @SecurityRequirement(name = "Authentication")
     @Operation(summary = "Inserts a new Extension Catalog (Platform Release) in the database", description = "Invoke this endpoint when a new extension catalog release is available")
+    @Transactional
     public ResponseEntity<Object> addExtensionCatalog(
             @NotNull(message = "X-Platform header missing") @RequestHeader(name = "X-Platform", required = false) String platformKey,
             @RequestHeader(name = "X-Platform-Type", required = false, defaultValue = "C") Platform.Type platformType,
             @RequestHeader(name = "X-Platform-Pinned", required = false, defaultValue = "false") boolean pinned,
             @NotNull(message = "Body payload is missing") @RequestBody(required = false) ExtensionCatalog catalog) {
+        adminWriteLock.acquire();
         final ArtifactCoords bom = catalog.getBom();
         LOG.info("Adding catalog {}", abbreviate(String.valueOf(bom), MAX_ABBREVIATION_WIDTH));
         ExtensionCatalogImportEvent event = new ExtensionCatalogImportEvent(catalog, platformKey, pinned, platformType);
@@ -146,9 +151,11 @@ public class AdminApi {
     @DeleteMapping(value = "/v1/extension/catalog", produces = MediaType.APPLICATION_JSON_VALUE, consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
     @SecurityRequirement(name = "Authentication")
     @Operation(summary = "Deletes an extension catalog (platform) from the database")
+    @Transactional
     public ResponseEntity<Object> deleteExtensionCatalog(
             @NotNull(message = "platformKey is missing") @RequestParam(name = "platformKey", required = false) String platformKey,
             @NotNull(message = "version is missing") @RequestParam(name = "version", required = false) String version) {
+        adminWriteLock.acquire();
         PlatformRelease platformRelease = platformReleaseRepository.findByPlatformKey(platformKey, version)
                 .orElseThrow(() -> new NotFoundException("No Platform Release found"));
         ExtensionCatalogDeleteEvent event = new ExtensionCatalogDeleteEvent(platformRelease);
@@ -161,8 +168,10 @@ public class AdminApi {
             MediaType.APPLICATION_JSON_VALUE, YAMLMediaTypes.APPLICATION_JACKSON_YAML})
     @SecurityRequirement(name = "Authentication")
     @Operation(summary = "Inserts an extension in the database")
+    @Transactional
     public ResponseEntity<Object> addExtension(
             @NotNull(message = "Body payload is missing") @RequestBody(required = false) io.quarkus.registry.catalog.Extension extension) {
+        adminWriteLock.acquire();
         ArtifactCoords bom = extension.getArtifact();
         Optional<ExtensionRelease> extensionRelease = extensionReleaseRepository
                 .findByGAV(bom.getGroupId(), bom.getArtifactId(), bom.getVersion());
@@ -179,10 +188,12 @@ public class AdminApi {
     @DeleteMapping(value = "/v1/extension", produces = MediaType.APPLICATION_JSON_VALUE, consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
     @SecurityRequirement(name = "Authentication")
     @Operation(summary = "Deletes an extension from the database")
+    @Transactional
     public ResponseEntity<Object> deleteExtension(
             @NotNull(message = "groupId is missing") @RequestParam(name = "groupId", required = false) String groupId,
             @NotNull(message = "artifactId is missing") @RequestParam(name = "artifactId", required = false) String artifactId,
             @RequestParam(name = "version", required = false) String version) {
+        adminWriteLock.acquire();
         if (version != null) {
             ArtifactCoords entity = ArtifactCoords.of(groupId, artifactId, null, null, version);
             ExtensionRelease extensionRelease = extensionReleaseRepository.findByGAV(groupId, artifactId, version)
@@ -223,12 +234,14 @@ public class AdminApi {
     @PostMapping(value = "/v1/extension/compat", produces = MediaType.APPLICATION_JSON_VALUE, consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
     @SecurityRequirement(name = "Authentication")
     @Operation(summary = "Flags an extension as compatible against a specific Quarkus version")
+    @Transactional
     public ResponseEntity<Object> addExtensionCompatibilty(
             @NotNull(message = "groupId is missing") @RequestParam(name = "groupId", required = false) String groupId,
             @NotNull(message = "artifactId is missing") @RequestParam(name = "artifactId", required = false) String artifactId,
             @NotNull(message = "version is missing") @RequestParam(name = "version", required = false) String version,
             @NotNull(message = "quarkusCore is missing") @RequestParam(name = "quarkusCore", required = false) String quarkusCore,
             @RequestParam(name = "compatible", required = false, defaultValue = "true") Boolean compatible) {
+        adminWriteLock.acquire();
         ExtensionRelease extensionRelease = extensionReleaseRepository.findByGAV(groupId, artifactId, version)
                 .orElseThrow(NotFoundException::new);
         LOG.info("Extension {}:{}:{} is {} with Quarkus {}",
@@ -247,11 +260,13 @@ public class AdminApi {
     @DeleteMapping(value = "/v1/extension/compat", produces = MediaType.APPLICATION_JSON_VALUE, consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
     @SecurityRequirement(name = "Authentication")
     @Operation(summary = "Flags an extension as incompatible against a specific Quarkus version")
+    @Transactional
     public ResponseEntity<Object> removeExtensionCompatibilty(
             @NotNull(message = "groupId is missing") @RequestParam(name = "groupId", required = false) String groupId,
             @NotNull(message = "artifactId is missing") @RequestParam(name = "artifactId", required = false) String artifactId,
             @NotNull(message = "version is missing") @RequestParam(name = "version", required = false) String version,
             @NotNull(message = "quarkusCore is missing") @RequestParam(name = "quarkusCore", required = false) String quarkusCore) {
+        adminWriteLock.acquire();
         ExtensionRelease extensionRelease = extensionReleaseRepository.findByGAV(groupId, artifactId, version)
                 .orElseThrow(NotFoundException::new);
         LOG.info("Extension {}:{}:{} is no longer compatible with Quarkus {}",
@@ -268,8 +283,12 @@ public class AdminApi {
     @DeleteMapping("/v1/maven/cache")
     @SecurityRequirement(name = "Authentication")
     @Operation(summary = "Clear the maven cache")
+    @Transactional
     public ResponseEntity<Object> clearCache() {
+        adminWriteLock.acquire();
         cache.clear();
+        // Every other instance drops its cache on its next Maven request, when it sees the new generation
+        dbStateRepository.updateUpdatedAt();
         return ResponseEntity.accepted().build();
     }
 
@@ -283,6 +302,7 @@ public class AdminApi {
             @RequestParam(name = "unlisted", required = false, defaultValue = "false") boolean unlisted,
             @RequestParam(name = "pinned", required = false, defaultValue = "false") boolean pinned,
             @RequestParam(name = "lts", required = false, defaultValue = "false") boolean lts) {
+        adminWriteLock.acquire();
         Platform platform = platformRepository.findByPlatformKey(platformKey)
                 .orElseThrow(() -> new NotFoundException("Platform not found"));
         PlatformStream stream = platformStreamRepository.findByPlatformAndStreamKey(platform, streamKey)
@@ -306,6 +326,7 @@ public class AdminApi {
     public ResponseEntity<Object> deletePlatformStream(
             @NotNull(message = "platformKey is missing") @PathVariable("platformKey") String platformKey,
             @NotNull(message = "streamKey is missing") @PathVariable("streamKey") String streamKey) {
+        adminWriteLock.acquire();
         Platform platform = platformRepository.findByPlatformKey(platformKey)
                 .orElseThrow(() -> new NotFoundException("Platform not found"));
         PlatformStream stream = platformStreamRepository.findByPlatformAndStreamKey(platform, streamKey)
@@ -341,6 +362,7 @@ public class AdminApi {
             @RequestParam(name = "unlisted", required = false, defaultValue = "false") boolean unlisted,
             @RequestParam(name = "pinned", required = false, defaultValue = "false") boolean pinned,
             @RequestParam(name = "metadata", required = false) String metadataJson) {
+        adminWriteLock.acquire();
         Map<String, Object> metadata = null;
         if (metadataJson != null && !metadataJson.isEmpty()) {
             try {
@@ -375,6 +397,7 @@ public class AdminApi {
             @NotNull(message = "version is missing") @PathVariable("version") String version,
             @NotNull(message = "categoryKey is missing") @PathVariable("categoryKey") String categoryKey,
             @RequestParam(name = "metadata", required = false) String metadataJson) {
+        adminWriteLock.acquire();
         Map<String, Object> metadata;
         if (metadataJson != null && !metadataJson.isEmpty()) {
             try {
@@ -415,6 +438,7 @@ public class AdminApi {
             @NotNull(message = "extensionArtifactId is missing") @PathVariable("extensionArtifactId") String extensionArtifactId,
             @NotNull(message = "extensionVersion is missing") @PathVariable("extensionVersion") String extensionVersion,
             @RequestParam(name = "metadata", required = false) String metadataJson) {
+        adminWriteLock.acquire();
         Map<String, Object> metadata;
         if (metadataJson != null && !metadataJson.isEmpty()) {
             try {
@@ -457,6 +481,7 @@ public class AdminApi {
             @NotNull(message = "artifactId is missing") @PathVariable("artifactId") String artifactId,
             @RequestParam(name = "name", required = false) String name,
             @RequestParam(name = "description", required = false) String description) {
+        adminWriteLock.acquire();
         Extension extension = extensionRepository.findByGA(groupId, artifactId)
                 .orElseThrow(() -> new NotFoundException("Extension not found"));
         extension.name = name;
@@ -484,6 +509,7 @@ public class AdminApi {
             @NotNull(message = "artifactId is missing") @PathVariable("artifactId") String artifactId,
             @NotNull(message = "version is missing") @PathVariable("version") String version,
             @NotNull(message = "metadata is required") @RequestParam(name = "metadata", required = false) String metadataJson) {
+        adminWriteLock.acquire();
         Map<String, Object> metadata;
         if (metadataJson != null && !metadataJson.isEmpty()) {
             try {

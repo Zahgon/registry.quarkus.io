@@ -16,6 +16,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.NamedQueries;
 import jakarta.persistence.NamedQuery;
 import jakarta.persistence.OneToMany;
+import jakarta.persistence.OrderBy;
 import jakarta.persistence.PrePersist;
 
 @Entity
@@ -132,10 +133,14 @@ public class PlatformRelease extends BaseEntity {
     @JdbcTypeCode(SqlTypes.JSON)
     public Map<String, Object> metadata;
 
+    // Catalog order is import order; without an explicit order PostgreSQL returns heap order, which a
+    // concurrent update or vacuum can change, and the catalog read-back would reorder.
     @OneToMany(mappedBy = "platformRelease", orphanRemoval = true)
+    @OrderBy("id")
     public List<PlatformExtension> extensions = new ArrayList<>();
 
     @OneToMany(mappedBy = "platformRelease", orphanRemoval = true)
+    @OrderBy("id")
     public List<PlatformReleaseCategory> categories = new ArrayList<>();
 
     public PlatformRelease() {

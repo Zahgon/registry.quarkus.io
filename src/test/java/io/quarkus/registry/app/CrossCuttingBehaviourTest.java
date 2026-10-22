@@ -93,32 +93,43 @@ class CrossCuttingBehaviourTest extends BaseTest {
     }
 
     @Test
-    void should_answer_cors_preflight_requests() {
+    void should_only_allow_the_same_origin() {
+        // quarkus.http.cors.enabled=true with no origin configured: the server's own origin only
+        String own = "http://localhost:" + io.restassured.RestAssured.port;
         given()
-                .header("Origin", "https://example.com")
+                .header("Origin", own)
                 .header("Access-Control-Request-Method", "GET")
                 .when().options("/client/platforms")
                 .then()
                 .statusCode(200)
-                .header("Access-Control-Allow-Origin", is("https://example.com"))
-                .header("Access-Control-Allow-Methods", containsString("GET"));
+                .header("Access-Control-Allow-Origin", is(own))
+                .header("Access-Control-Allow-Credentials", is("false"))
+                .header("Access-Control-Allow-Methods", is("GET"));
+        given()
+                .header("Origin", "https://example.com")
+                .when().get("/client/platforms")
+                .then()
+                .statusCode(403);
     }
 
     @Test
     void should_expose_the_health_endpoints_used_by_the_openshift_probes() {
-        // openshift/template.yaml probes these two exact paths
+        // openshift/template.yaml probes these two exact paths, in the MicroProfile Health format
         given().when().get("/q/health/live")
                 .then().statusCode(200)
                 .body("status", is("UP"))
-                .body("components.'Maven cache health'.status", is("UP"));
+                .body("checks.name", org.hamcrest.Matchers.contains("Maven cache health"));
 
         given().when().get("/q/health/ready")
                 .then().statusCode(200)
                 .body("status", is("UP"))
-                .body("components.db.status", is("UP"));
+                .body("checks.name", org.hamcrest.Matchers.contains("Database connections health check"))
+                .body("checks[0].data.'<default>'", is("UP"));
 
         given().when().get("/q/health")
-                .then().statusCode(200).body("status", is("UP"));
+                .then().statusCode(200).body("status", is("UP"))
+                .body("checks.name", org.hamcrest.Matchers.contains("Maven cache health",
+                        "Database connections health check"));
     }
 
     @Test

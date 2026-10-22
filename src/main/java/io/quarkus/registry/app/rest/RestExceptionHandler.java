@@ -2,6 +2,9 @@ package io.quarkus.registry.app.rest;
 
 import java.lang.reflect.Executable;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,11 +28,23 @@ import jakarta.validation.ConstraintViolationException;
  * {@code io.quarkus.registry.app.resteasy} package. Extending
  * {@link ResponseEntityExceptionHandler} keeps the standard Spring MVC status codes (406, 405, ...)
  * intact next to the application specific mappings below.
+ *
+ * <p>RESTEasy answered those framework-level failures (unknown route, unsupported method, media type
+ * not acceptable or not supported, unreadable body or header) with the status alone and an empty body,
+ * where Spring renders an RFC 9457 problem document. {@link #handleExceptionInternal} keeps the
+ * status and headers and drops the body, so every such answer is the one the original gave. An
+ * unexpected failure answers 500 with Quarkus's own production error document,
+ * {@code {"details": "Error id <id>", "stack": ""}}, and the same id is logged with the cause.
  */
 @RestControllerAdvice
 public class RestExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static final Logger LOG = LoggerFactory.getLogger(RestExceptionHandler.class);
+
+    /** Error ids are {@code <uuid>-<n>}, as Quarkus prints them: one uuid per process, one counter per error. */
+    private static final String ERROR_ID_PREFIX = UUID.randomUUID().toString();
+
+    private static final AtomicLong ERROR_COUNT = new AtomicLong();
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Object> handleIllegalArgument(IllegalArgumentException exception) {
@@ -63,8 +78,17 @@ public class RestExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Object> handleInternalServerError(Exception exception) {
-        LOG.error("Internal server error occurred", exception);
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        String errorId = ERROR_ID_PREFIX + "-" + ERROR_COUNT.incrementAndGet();
+        LOG.error("HTTP Request failed, error id: {}", errorId, exception);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("details", "Error id " + errorId, "stack", ""));
+    }
+
+    @Override
+    protected ResponseEntity<Object> handleExceptionInternal(Exception exception, Object body, HttpHeaders headers,
+            HttpStatusCode statusCode, WebRequest request) {
+        return ResponseEntity.status(statusCode).headers(headers).build();
     }
 
     @Override
